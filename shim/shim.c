@@ -34,7 +34,7 @@ static uint64_t gicr_size = 0x100000UL;
 #define GICR_ISPENDR0		(GICR_SGI + 0x200)
 #define GICR_ISACTIVER0		(GICR_SGI + 0x300)
 #define GICR_ICFGR1		(GICR_SGI + 0xc04)
-#define VTIMER_INTID		19	/* DT: <GIC_PPI 3 ...>, not the usual 27 */
+#define VTIMER_INTID		27	/* fallback; the live FDT says PPI 11 = 16+11 */
 #define PTIMER_INTID		18	/* DT: <GIC_PPI 2 ...> */
 #define SGI_INTID		1
 
@@ -66,6 +66,7 @@ static const char *stage;	/* set at runtime: no absolute pointers in data */
 static volatile uint64_t sec_mpidr[NR_CPUS];
 static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
 static volatile uint32_t irq_count, irq_other, irq_last;
+static uint32_t vtime_id;
 static volatile int irq_src;
 
 /* ICC_SGI1R_EL1 value targeting the calling core only. */
@@ -132,7 +133,7 @@ static void irq_handler(void)
 		irq_count++;
 	else
 		irq_other++;
-	if (id == VTIMER_INTID)
+	if (id == vtime_id)
 		wsr("cntv_tval_el0", rsr("cntfrq_el0") / 100);	/* 10 ms */
 	else if (id == PTIMER_INTID)
 		wsr("cntp_tval_el0", rsr("cntfrq_el0") / 100);
@@ -168,6 +169,21 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 /* ---- SMP ---- */
 
 static uintptr_t find_gicr(void);
+
+/* PPI numbers are 16 + the number in the DT's GIC_PPI entry. Sweet's timer
+ * said PPI 3 (19); lemonadep says PPI 11 (27), so read it, never assume. */
+static uint32_t fdt_vtimer_intid(uintptr_t dtb)
+{
+	int off;
+	uint32_t len = 0;
+	if (!dtb || !fdt_compatible(dtb, "arm,armv8-timer", &off))
+		return VTIMER_INTID;
+	const uint32_t *c = fdt_prop(dtb, off, "interrupts", &len);
+	if (!c || len < 24)
+		return VTIMER_INTID;
+	uint32_t num = __builtin_bswap32(c[6]);	/* 3rd triple: virtual timer */
+	return 16 + num;
+}
 
 void secondary_main(uint64_t idx)
 {
@@ -239,7 +255,7 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	irq_count = irq_other = 0;
 	irq_last = 0x3ff;
 	irq_src = src;
-	if (src == VTIMER_INTID) {
+	if (src == (int)vtime_id) {
 		wsr("cntv_tval_el0", f / 100);
 		wsr("cntv_ctl_el0", 1);
 	} else if (src == PTIMER_INTID) {
@@ -282,8 +298,12 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	con_hex2(" pre", "tctl=", ist, "last=", irq_last);
 }
 
-static void test_gic(void)
+static uint32_t vtime_id = VTIMER_INTID;
+
+static void test_gic(uintptr_t dtb)
 {
+	vtime_id = fdt_vtimer_intid(dtb);
+	con_hex2("VTIMER", "intid=", vtime_id, "ppo=", vtime_id - 16);
 	stage = "gic sre";
 	uint64_t sre = rsr("icc_sre_el1");
 	if (!(sre & 1)) {
@@ -323,7 +343,7 @@ static void test_gic(void)
 	uint32_t pri_before = rd32(r + GICR_IPRIORITYR + 16);	/* INTIDs 16..19 */
 	for (int id = 0; id < 32; id++)
 		wr8(r + GICR_IPRIORITYR + id, 0xa0);
-	wr32(r + GICR_ISENABLER0, (1U << VTIMER_INTID) | (1U << PTIMER_INTID) | (1U << SGI_INTID));
+	wr32(r + GICR_ISENABLER0, (1U << vtime_id) | (1U << PTIMER_INTID) | (1U << SGI_INTID));
 	con_hex2("ENABLE", "was=", en_before, "now=", rd32(r + GICR_ISENABLER0));
 	(void)grp;
 	(void)pri_before;
@@ -337,7 +357,7 @@ static void test_gic(void)
 	con_hex2("ICC", "ctlr=", ctlr, "grpen1=", rsr("icc_igrpen1_el1"));
 
 	stage = "gic vtimer";
-	irq_window("VTIMER", r, VTIMER_INTID);
+	irq_window("VTIMER", r, (int)vtime_id);
 	stage = "gic sgi";
 	irq_window("SGI1", r, SGI_INTID);
 	wr32(r + GICR_ICENABLER0, 0xffffffff);
@@ -545,6 +565,44 @@ static void mem_report(uintptr_t dtb, uintptr_t self)
 	con_hex2("SHIM", "at=", (uint32_t)self, "hi=", (uint32_t)((uint64_t)self >> 32));
 }
 
+/* Writes a pattern and reads it back: with the MMU off this is a plain PA
+ * access, which is what "is 4 GiB+ RAM usable" actually means here. */
+static void hm_probe(const char *label, uint64_t pa)
+{
+	volatile uint64_t *p = (volatile uint64_t *)pa;
+	uint64_t pat = 0xa5a50000a5a5a5a5ULL ^ pa;
+
+	*p = pat;
+	__asm__ volatile("dsb sy" ::: "memory");
+	con_hex2(label, "pa_lo=", (uint32_t)pa, "ok=", *p == pat);
+}
+
+/* FDT memreserve block: pairs of (addr, size) ending in 0,0. */
+static void rsv_report(uintptr_t dtb)
+{
+	if (!dtb)
+		return;
+	uint32_t off = __builtin_bswap32(rd32(dtb + 0x10));
+	int n = 0;
+	for (; n < 16; n++) {
+		const volatile uint64_t *e = (const volatile uint64_t *)(dtb + off + n * 16);
+		uint64_t a = __builtin_bswap64(e[0]), sz = __builtin_bswap64(e[1]);
+		if (!a && !sz)
+			break;
+		con_hex2("RSV", "lo=", (uint32_t)a, "MiB=", (uint32_t)(sz >> 20));
+	}
+	con_hex2("RSV", "n=", n, "off=", off);
+}
+
+static void qual_report(uintptr_t dtb)
+{
+	hm_probe("HMARK", 0x100000000ULL);	/* Sol's chosen arena */
+	hm_probe("HMARK", 0x140000000ULL);	/* just past it */
+	hm_probe("HMARK", 0x199800000ULL);	/* top of the 2897 MiB window */
+	rsv_report(dtb);
+	ufs_luns();
+}
+
 static void fdt_report(uintptr_t dtb)
 {
 	int c;
@@ -690,6 +748,10 @@ void shim_main(uint64_t dtb)
 	test_ufs(ufs_base);
 	con_skip();
 	/* Keep the probe results on screen (later tests clear it); reset after 3 min. */
+	con_page(RED);
+	con_str("SHIM", "page 3: irq, highmem, luns");
+	test_gic(dtb);
+	qual_report(dtb);
 	con_str("UFS", "probe done, reset in ~3 min");
 	delay_ms(180000);
 	reset(20);
@@ -730,7 +792,7 @@ void shim_main(uint64_t dtb)
 	stage = "psci";
 	con_hex2("PSCI", "ver=", smc(PSCI_VERSION, 0, 0, 0), "smccc=", smc(SMCCC_VERSION, 0, 0, 0));
 	con_skip();
-	test_gic();
+	test_gic(dtb);
 
 	stage = "done";
 	reset(40);

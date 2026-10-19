@@ -165,6 +165,21 @@ static const char *fs_type(uint32_t lba)
 }
 
 /* One line per GPT entry of at least 64 MiB: name, first LBA, size in MiB (4K blocks). */
+void ufs_luns(void)
+{
+	if (!ufs)
+		return;
+	for (uint8_t lun = 0; lun < 8; lun++) {
+		uint32_t ocs = 0, st = 0;
+		static const uint8_t cap10[10] = { 0x25 };
+		uint32_t rc = scsi(lun, cap10, sizeof(cap10), data, 8, &ocs, &st);
+		con_hex2("LU", "lun=", lun, "rc=", rc);
+		if (rc)
+			continue;
+		con_hex2("LU", "lastlba=", be32(data), "blk=", be32(data + 4));
+	}
+}
+
 static void list_partitions(uint32_t entry_lba, uint32_t nent)
 {
 	static uint8_t ents[128 * 128] __attribute__((aligned(4096)));
