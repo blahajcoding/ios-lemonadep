@@ -59,6 +59,7 @@ static inline uint32_t rd32(uintptr_t a) { return *(volatile uint32_t *)a; }
 static inline uint64_t rd64(uintptr_t a) { return *(volatile uint64_t *)a; }
 static inline void wr32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
 static inline void wr8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
+static inline uint8_t rd8(uintptr_t a) { return *(volatile uint8_t *)a; }
 
 extern char secondary_entry[];
 
@@ -132,8 +133,10 @@ static void irq_handler(void)
 	uint64_t iar = rsr("icc_iar1_el1");
 	uint32_t id = iar & 0xffffff;
 
-	if (id >= 1020 && id <= 1023)
-		return;	/* spurious */
+	if (id >= 1020 && id <= 1023) {
+		irq_spur++;
+		return;
+	}
 	irq_last = id;
 	if (id == (uint32_t)irq_src) {
 		irq_count++;
@@ -268,7 +271,7 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	uint64_t f = rsr("cntfrq_el0");
 	uint32_t pend = 0, act = 0, isr = 0, hppi = 0x3ff, ist = 0;
 
-	irq_count = irq_other = 0;
+	irq_count = irq_other = irq_spur = 0;
 	irq_last = 0x3ff;
 	irq_src = src;
 	if (src == (int)vtime_id) {
@@ -293,6 +296,7 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	hppi = rsr("icc_hppir1_el1");
 
 	__asm__ volatile("msr daifclr, #2" ::: "memory");
+	uint64_t daif_now = rsr("daif"), igrp = rsr("icc_igrpen1_el1");
 	t = now() + f * 3 / 10;
 	/* SGI: one already sent above, send 9 more 10 ms apart -> expect 10 */
 	uint64_t next = now() + f / 100;
@@ -311,7 +315,9 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	con_hex2(label, "irqs=", irq_count, "other=", irq_other);
 	con_hex2(" pre", "pend=", pend, "act=", act);
 	con_hex2(" pre", "isr=", isr, "hppi=", hppi);
-	con_hex2(" pre", "tctl=", ist, "last=", irq_last);
+	con_hex2(" pre", "tctl=", ist, "spur=", irq_spur);
+	con_hex2(" now", "daif=", daif_now, "grp1=", igrp);
+	con_hex2(" now", "last=", irq_last, "isr=", rsr("isr_el1"));
 }
 
 static uint32_t vtime_id = VTIMER_INTID;
@@ -358,6 +364,7 @@ static void test_gic(uintptr_t dtb)
 		for (int i = 0; i < 100000 && (rd32(r + GICR_WAKER) & 4); i++)
 			;
 	}
+	con_hex2("WAKE", "before=", waker, "after=", rd32(r + GICR_WAKER));
 	stage = "gic dist";
 	wr32(gicd_base, dctlr | 0x13);
 	gicd_wait_rwp();
@@ -365,9 +372,11 @@ static void test_gic(uintptr_t dtb)
 
 	stage = "gic config";
 	wr32(r + GICR_IGROUPR0, 0xffffffff);	/* NS view: secure bits are WI */
-	for (int id = 0; id < 32; id++)
+	for (int id = 0; id < 32; id++) {
 		wr8(r + GICR_IPRIORITYR + id, 0xa0);
-	con_str("STEP", "prio");
+		if (!(id & 7))
+			con_hex2("STEP", "prio=", id, "r=", rd8(r + GICR_IPRIORITYR + id));
+	}
 
 	stage = "gic icc";
 	uint64_t ctlr = rsr("icc_ctlr_el1");
