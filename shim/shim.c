@@ -396,6 +396,22 @@ static void test_gic(uintptr_t dtb)
 	irq_window("VTIMER", r, (int)vtime_id);
 	stage = "gic sgi";
 	irq_window("SGI1", r, SGI_INTID);
+
+	/* Decisive test: is 27 pending but not signalled, or signalled and lost? */
+	wsr("cntv_tval_el0", frq / 100);
+	wsr("cntv_ctl_el0", 1);
+	isb();
+	delay_ms(20);
+	con_hex2("DAIF", "pre=", rsr("daif"), "pend=", rd32(r + GICR_ISPENDR0));
+	__asm__ volatile("msr daifclr, #0xf" ::: "memory");
+	uint32_t iar = 0x3ff;
+	for (int i = 0; i < 200000 && iar == 0x3ff; i++)
+		iar = rsr("icc_iar1_el1");
+	__asm__ volatile("msr daifset, #0xf" ::: "memory");
+	con_hex2("DAIF", "post=", rsr("daif"), "iar=", iar);
+	con_hex2("VBAR", "lo=", (uint32_t)rsr("vbar_el1"), "cnt=", irq_count);
+	con_hex2("SPSR", "lo=", (uint32_t)rsr("spsr_el1"), "el=", (uint32_t)rsr("currentel"));
+	wsr("cntv_ctl_el0", 0);
 	stage = "gic done";
 }
 
