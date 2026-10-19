@@ -21,6 +21,11 @@ struct fbcon con = {
 static uint32_t con_bg;
 static int row;
 
+void con_disable(void)
+{
+	con.fb = 0;
+}
+
 void con_init(uintptr_t base, uint32_t w, uint32_t h, uint32_t pitch)
 {
 	if (!base || !w || !h || !pitch)
@@ -33,6 +38,8 @@ void con_init(uintptr_t base, uint32_t w, uint32_t h, uint32_t pitch)
 
 void con_clear(uint32_t bg)
 {
+	if (!con.fb)
+		return;
 	for (uint32_t y = 0; y < con.h; y++) {
 		volatile uint32_t *line = con.fb + y * (con.pitch / 4);
 		for (uint32_t x = 0; x < con.w; x++)
@@ -46,6 +53,8 @@ static void put_char(int col, char ch, uint32_t fg)
 {
 	if (ch < 0x20 || ch > 0x7e)
 		ch = '?';
+	if (!con.fb)
+		return;
 	const unsigned char *g = font8x16[ch - 0x20];
 	int x0 = MARGIN + col * CH_W, y0 = MARGIN + row * CH_H;
 	if (x0 + CH_W > (int)con.w || y0 + CH_H > (int)con.h)

@@ -23,6 +23,8 @@ extern struct fbcon con;
 
 /* Point the console at a framebuffer; base 0 keeps the compile-time default. */
 void con_init(uintptr_t base, uint32_t w, uint32_t h, uint32_t pitch);
+/* No framebuffer known: discard all console output instead of writing blind. */
+void con_disable(void);
 void con_clear(uint32_t bg);
 void con_skip(void);
 void con_str(const char *label, const char *s);

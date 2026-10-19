@@ -19,9 +19,10 @@
 #define RESTART_BOOTLOADER	0x77665500U
 #define PSHOLD			0x0c264000UL
 
-#define GICD_BASE		0x17a00000UL
-#define GICR_BASE		0x17a60000UL
-#define GICR_SIZE		0x100000UL
+/* Filled from the live FDT (arm,gic-v3); these are the platform defaults. */
+static uintptr_t gicd_base = 0x17a00000UL;
+static uintptr_t gicr_base = 0x17a60000UL;
+static uint64_t gicr_size = 0x100000UL;
 #define GICR_PE_SIZE		0x20000UL
 #define GICR_TYPER		0x08
 #define GICR_WAKER		0x14
@@ -213,10 +214,10 @@ static uintptr_t find_gicr(void)
 	uint64_t aff = rsr("mpidr_el1");
 	uint32_t want = (aff & 0xffffff) | ((aff >> 8) & 0xff000000);
 
-	for (uintptr_t off = 0; off < GICR_SIZE; off += GICR_PE_SIZE) {
-		uint64_t typer = rd64(GICR_BASE + off + GICR_TYPER);
+	for (uint64_t off = 0; off < gicr_size; off += GICR_PE_SIZE) {
+		uint64_t typer = rd64(gicr_base + off + GICR_TYPER);
 		if ((uint32_t)(typer >> 32) == want)
-			return GICR_BASE + off;
+			return gicr_base + off;
 		if (typer & (1 << 4))	/* Last */
 			break;
 	}
@@ -225,7 +226,7 @@ static uintptr_t find_gicr(void)
 
 static void gicd_wait_rwp(void)
 {
-	for (int i = 0; i < 1000000 && (rd32(GICD_BASE) & (1U << 31)); i++)
+	for (int i = 0; i < 1000000 && (rd32(gicd_base) & (1U << 31)); i++)
 		;
 }
 
@@ -295,11 +296,11 @@ static void test_gic(void)
 	}
 
 	stage = "gic dist";
-	uint32_t dctlr = rd32(GICD_BASE);
+	uint32_t dctlr = rd32(gicd_base);
 	/* Non-secure view (DS=0): bit0 EnableGrp1, bit1 EnableGrp1A, bit4 ARE_NS; Linux writes 0x13 */
-	wr32(GICD_BASE, dctlr | 0x13);
+	wr32(gicd_base, dctlr | 0x13);
 	gicd_wait_rwp();
-	con_hex2("GICD", "was=", dctlr, "now=", rd32(GICD_BASE));
+	con_hex2("GICD", "was=", dctlr, "now=", rd32(gicd_base));
 
 	stage = "gic redist";
 	uintptr_t r = find_gicr();
@@ -412,12 +413,30 @@ static void fb_setup(uintptr_t dtb)
 		fdt_u32(dtb, ch, "height", &h);
 		fdt_u32(dtb, ch, "stride", &pitch);
 	}
-	if (!splash_base)
+	if (!splash_base) {
+		/* Writing to a guessed address could corrupt whatever ABL keeps there. */
+		con_disable();
 		return;
+	}
+
+	/* Panel resolution is the next best guess: ABL's splash is panel-sized. */
+	if (!(w && h && pitch)) {
+		int pn;
+		uint32_t pw = 0, ph = 0;
+		if (fdt_compatible(dtb, "qcom,mdss-dsi-panel", &pn) &&
+		    fdt_u32(dtb, pn, "qcom,mdss-dsi-panel-width", &pw) &&
+		    fdt_u32(dtb, pn, "qcom,mdss-dsi-panel-height", &ph)) {
+			w = pw;
+			h = ph;
+			pitch = pw * 4;
+		}
+	}
 	if (w && h && pitch && (uint64_t)pitch * h <= splash_size)
 		con_init(splash_base, w, h, pitch);
 	else if (splash_size >= (uint64_t)FB_STRIDE * FB_H)
 		con_init(splash_base, FB_W, FB_H, FB_STRIDE);
+	else
+		con_disable();
 }
 
 static void fdt_report(uintptr_t dtb)
@@ -474,6 +493,49 @@ static void fdt_report(uintptr_t dtb)
 		con_str("BOOTARGS", args);
 }
 
+static void gic_setup(uintptr_t dtb)
+{
+	int off;
+	uint64_t a, sz;
+
+	if (!dtb || !fdt_compatible(dtb, "arm,gic-v3", &off))
+		return;
+	if (fdt_reg1(dtb, off, 0, &a, &sz))
+		gicd_base = a;
+	if (fdt_reg1(dtb, off, 1, &a, &sz)) {
+		gicr_base = a;
+		gicr_size = sz;
+	}
+}
+
+/* Boot-CPU facts the XNU port depends on (Sol round-1, task 2). */
+static void cpu_report(uintptr_t dtb)
+{
+	uint64_t frq = rsr("cntfrq_el0"), mmfr = rsr("id_aa64mmfr0_el1"), sctlr = rsr("sctlr_el1");
+	int psci;
+
+	con_hex2("CPU", "el=", (uint32_t)rsr("CurrentEL"), "midr=", (uint32_t)rsr("midr_el1"));
+	con_hex2("CPU", "mpidr=", (uint32_t)rsr("mpidr_el1"), "cntfrq=", (uint32_t)frq);
+	con_hex2("MMFR0", "parange=", (uint32_t)(mmfr & 0xf), "tg16=", (uint32_t)((mmfr >> 20) & 0xf));
+	con_hex2("SCTLR", "lo=", (uint32_t)sctlr, "hi=", (uint32_t)(sctlr >> 32));
+	con_hex2("GIC", "gicd=", (uint32_t)gicd_base, "gicr=", (uint32_t)gicr_base);
+	if (dtb && fdt_compatible(dtb, "arm,psci-1.0", &psci)) {
+		const char *m = fdt_str(dtb, psci, "method");
+		con_str("PSCI", m ? m : "?");
+	}
+
+	/* Redistributor stride/count: every PE, so we know how many GICR frames exist. */
+	int n = 0;
+	for (uint64_t off = 0; off < gicr_size && n < 12; off += GICR_PE_SIZE) {
+		uint64_t ty = rd64(gicr_base + off + GICR_TYPER);
+		con_hex2("GICR", "aff=", (uint32_t)(ty >> 32), "last=", (uint32_t)((ty >> 4) & 1));
+		n++;
+		if (ty & (1ULL << 4))
+			break;
+	}
+	con_hex2("GICR", "n=", n, "MiB=", (uint32_t)(gicr_size >> 20));
+}
+
 static uintptr_t fdt_ufs_base(uintptr_t dtb)
 {
 	int off;
@@ -491,10 +553,12 @@ void shim_main(uint64_t dtb)
 	/* Everything below is driven by the blob ABL handed over. */
 	stage = "fdt";
 	fb_setup(dtb);
+	gic_setup(dtb);
 	con_clear(RED);
 	con_str("SHIM", "lemonadep fdt probe + ufs");
 	con_skip();
 	fdt_report(dtb);
+	cpu_report(dtb);
 	con_skip();
 
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
@@ -540,7 +604,7 @@ void shim_main(uint64_t dtb)
 	con_skip();
 	con_hex("PAR img", mmu_probe((uintptr_t)shim_main));
 	con_hex("PAR fb", mmu_probe((uintptr_t)con.fb + 0x1000));
-	con_hex("PAR gic", mmu_probe(GICD_BASE));
+	con_hex("PAR gic", mmu_probe(gicd_base));
 	con_hex("PAR 12G", mmu_probe(0x300000000UL));
 	con_skip();
 	con_hex2("FILL us", "off=", to_us(fill_off), "on=", to_us(fill_on));
