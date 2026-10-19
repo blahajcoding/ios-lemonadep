@@ -1,5 +1,41 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Lemonadep interrupt decision handoff (2026-10-19)
+
+- Scope: diagnosis only; engineer implements. No new build, CI run, device
+  command or independently observed boot result. User reports expired CNTV,
+  INTID 27 pending/enabled, awake redistributor, no IRQ, and an earlier active
+  SGI0. These are reported observations, not reproduced here.
+- Architectural correction: GICD_CTLR=0x53 has DS (bit 6) set: single-security-
+  state GIC view, ARE=1 and both group enables=1. GICR_IGROUPR0=0xffffffff
+  places INTID 27 in Group 1. Do not import sweet's DS=0/secure-Group0
+  explanation or change DS. EL3 exception routing is a separate question.
+- Leading hypothesis, NOT established: inherited CPU-interface active priority
+  prevents preemption. An active redistributor bit alone does not prove an
+  outstanding running priority (priority drop and deactivation differ).
+  Best new read: ICC_RPR_EL1 immediately before unmasking with CNTV expired;
+  in the physical ICC view, <=0xa0 blocks this 0xa0 interrupt, 0xff is idle.
+  No single register distinguishes every possible failure mode.
+- Next experiment: one framebuffer row/page with ICC_RPR_EL1,
+  ICC_HPPIR1_EL1, ICC_SRE_EL1 and ICC_IGRPEN1_EL1 after ISB, while IRQ masked
+  and timer expired. Also explicitly enable SGI1: reported ISENABLER0=
+  0x08000000 excludes bit 1; shim/shim.c enables only the timer before its
+  SGI test, so the SGI failure is not yet independent evidence.
+- If priority blocks, investigate owned cold-entry active-priority state;
+  clearing GICR_ICACTIVER does not drop CPU running priority. Do not issue
+  blind EOIR(0), touch secure priority state, or treat an IAR read as passive.
+  If RPR idle, check group enable/physical-vs-virtual ICC view and higher-EL
+  routing, then exact MPIDR/GICR_TYPER affinity before Qualcomm errata.
+- Timer fallback only if ownership really differs: firmware must expose a
+  Group1 timer, or use accessible CNTP with its actual INTID 30 and adapt
+  timer register programming too. DT/ADT edits cannot reroute CNTV to CNTP.
+  Keep 0004's Group1 IAR1/EOIR1 IRQ path; qualify repeated timer IRQs before
+  XNU. No evidence here changes MTX/MTXv3 or the overall port decision.
+- References: Arm register descriptions for GICD_CTLR, GICR_IGROUPR0,
+  ICC_RPR_EL1, ICC_HPPIR1_EL1 and ICC_EOIR1_EL1 at
+  https://df.lth.se/~getz/ARM/SysReg/ ; Linux irq-gic-v3.c cold-entry setup
+  clears accessible Group0 active priorities before Group1 priorities.
+
 ## Lemonadep architecture handoff (2026-10-19, round 2)
 
 - Scope: research decisions only; user implements. This round inspected
