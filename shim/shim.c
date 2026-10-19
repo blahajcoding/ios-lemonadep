@@ -316,7 +316,9 @@ static void irq_window(const char *label, uintptr_t r, int src)
 	con_hex2(" pre", "pend=", pend, "act=", act);
 	con_hex2(" pre", "isr=", isr, "hppi=", hppi);
 	con_hex2(" pre", "tctl=", ist, "spur=", irq_spur);
-	con_hex2(" now", "daif=", daif_now, "grp1=", igrp);
+	con_hex2(" pre", "rpr=", rsr("icc_rpr_el1"), "hppi=", hppi);
+	con_hex2(" pre", "sre=", rsr("icc_sre_el1"), "igrp=", igrp);
+	con_hex2(" now", "daif=", daif_now, "spur=", irq_spur);
 	con_hex2(" now", "last=", irq_last, "isr=", rsr("isr_el1"));
 }
 
@@ -373,7 +375,7 @@ static void test_gic(uintptr_t dtb)
 	stage = "gic config";
 	wr32(r + GICR_IGROUPR0, 0xffffffff);	/* NS view: secure bits are WI */
 	for (int id = 0; id < 32; id++) {
-		wr8(r + GICR_IPRIORITYR + id, 0xa0);
+		wr8(r + GICR_IPRIORITYR + id, 0x00);
 		if (!(id & 7))
 			con_hex2("STEP", "prio=", id, "r=", rd8(r + GICR_IPRIORITYR + id));
 	}
@@ -387,8 +389,9 @@ static void test_gic(uintptr_t dtb)
 	isb();
 	con_hex2("ICC1", "ctlr=", ctlr, "grp1=", rsr("icc_igrpen1_el1"));
 	stage = "gic enable";
-	wr32(r + GICR_ISENABLER0, 1U << vtime_id);
+	wr32(r + GICR_ISENABLER0, (1U << vtime_id) | (1U << SGI_INTID));
 	con_hex2("ENABLE", "now=", rd32(r + GICR_ISENABLER0), "pend=", rd32(r + GICR_ISPENDR0));
+	con_hex2("ENABLE", "sgi=", rd32(r + GICR_ISENABLER0 + 4), "act=", rd32(r + GICR_ISACTIVER0));
 	stage = "gic vtimer";
 	irq_window("VTIMER", r, (int)vtime_id);
 	stage = "gic sgi";
