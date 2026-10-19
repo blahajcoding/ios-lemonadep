@@ -11,15 +11,31 @@
 #define MARGIN		24
 #define LABEL_COLS	8
 
-volatile uint32_t *con_fb = (volatile uint32_t *)FB_BASE;
+struct fbcon con = {
+	.fb = (volatile uint32_t *)FB_BASE,
+	.w = FB_W,
+	.h = FB_H,
+	.pitch = FB_STRIDE,
+};
+
 static uint32_t con_bg;
 static int row;
 
+void con_init(uintptr_t base, uint32_t w, uint32_t h, uint32_t pitch)
+{
+	if (!base || !w || !h || !pitch)
+		return;
+	con.fb = (volatile uint32_t *)base;
+	con.w = w;
+	con.h = h;
+	con.pitch = pitch;
+}
+
 void con_clear(uint32_t bg)
 {
-	for (int y = 0; y < FB_H; y++) {
-		volatile uint32_t *line = con_fb + y * (FB_STRIDE / 4);
-		for (int x = 0; x < FB_W; x++)
+	for (uint32_t y = 0; y < con.h; y++) {
+		volatile uint32_t *line = con.fb + y * (con.pitch / 4);
+		for (uint32_t x = 0; x < con.w; x++)
 			line[x] = bg;
 	}
 	con_bg = bg;
@@ -32,13 +48,13 @@ static void put_char(int col, char ch, uint32_t fg)
 		ch = '?';
 	const unsigned char *g = font8x16[ch - 0x20];
 	int x0 = MARGIN + col * CH_W, y0 = MARGIN + row * CH_H;
-	if (x0 + CH_W > FB_W || y0 + CH_H > FB_H)
+	if (x0 + CH_W > (int)con.w || y0 + CH_H > (int)con.h)
 		return;
 	for (int gy = 0; gy < 16; gy++)
 		for (int gx = 0; gx < 8; gx++) {
 			uint32_t c = (g[gy] & (0x80 >> gx)) ? fg : con_bg;
 			for (int sy = 0; sy < SCALE; sy++) {
-				volatile uint32_t *p = con_fb + (y0 + gy * SCALE + sy) * (FB_STRIDE / 4)
+				volatile uint32_t *p = con.fb + (y0 + gy * SCALE + sy) * (con.pitch / 4)
 						       + x0 + gx * SCALE;
 				for (int sx = 0; sx < SCALE; sx++)
 					p[sx] = c;

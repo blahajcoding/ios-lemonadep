@@ -6,9 +6,12 @@ static uint32_t host_fb[FB_H * FB_STRIDE / 4];
 
 int main(void)
 {
-	con_fb = host_fb;
+	con_init((uintptr_t)host_fb, FB_W, FB_H, FB_STRIDE);
 	con_clear(RED);
-	con_str("SHIM", "sweet milestone 2");
+	con_str("SHIM", "lemonadep fdt probe + ufs");
+	con_str("MODEL", "Qualcomm Technologies, Inc. Lahaina");
+	con_hex2("SPLASH", "lo=", 0xe1000000, "MiB=", 0x23);
+	con_hex2("FBGEOM", "w=", 1080, "h=", 2400);
 	con_hex("MMFR0", 0x0000000000101122ULL);
 	con_hex2("PSCI", "ver=", 0x10001, "smccc=", 0x10002);
 	con_hex2("CPU7", "ret=", 0, "mpidr=", 0x81000700);

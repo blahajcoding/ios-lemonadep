@@ -8,9 +8,12 @@
  */
 #include <stdint.h>
 #include "console.h"
+#include "fdt.h"
 #include "mmu.h"
 #include "loader.h"
 #include "ufs.h"
+
+#define UFS_FALLBACK	0x01d84000UL	/* ufshc@1d84000 on this platform */
 
 #define IMEM_RESTART_REASON	0x146aa65cUL	/* qcom,msm-imem restart_reason@65c */
 #define RESTART_BOOTLOADER	0x77665500U
@@ -370,22 +373,141 @@ static uint32_t to_us(uint64_t ticks)
 	return ticks * 10 / 192;	/* 19.2 MHz */
 }
 
+/* ---- live FDT: what did ABL actually hand us? ---- */
+
+static uintptr_t splash_base;
+static uint64_t splash_size;
+
+static int is_str(const char *v, const char *want)
+{
+	if (!v)
+		return 0;
+	while (*v && *v == *want)
+		v++, want++;
+	return *v == *want;
+}
+
+static void fb_setup(uintptr_t dtb)
+{
+	int rm;
+
+	if (dtb && fdt_path(dtb, "/reserved-memory", &rm)) {
+		int c = FDT_NOFF;
+		while (fdt_child(dtb, rm, &c)) {
+			uint64_t a, s;
+			if (!fdt_reg(dtb, c, 0, &a, &s))
+				continue;
+			if (is_str(fdt_str(dtb, c, "label"), "cont_splash_region")) {
+				splash_base = a;
+				splash_size = s;
+			}
+		}
+	}
+
+	/* Geometry from /chosen if the board's dtb has it, else sweet's default. */
+	int ch;
+	uint32_t w = 0, h = 0, pitch = 0;
+	if (dtb && fdt_path(dtb, "/chosen", &ch)) {
+		fdt_u32(dtb, ch, "width", &w);
+		fdt_u32(dtb, ch, "height", &h);
+		fdt_u32(dtb, ch, "stride", &pitch);
+	}
+	if (!splash_base)
+		return;
+	if (w && h && pitch && (uint64_t)pitch * h <= splash_size)
+		con_init(splash_base, w, h, pitch);
+	else if (splash_size >= (uint64_t)FB_STRIDE * FB_H)
+		con_init(splash_base, FB_W, FB_H, FB_STRIDE);
+}
+
+static void fdt_report(uintptr_t dtb)
+{
+	int c;
+
+	if (!dtb) {
+		con_str("FDT", "none");
+		return;
+	}
+	const char *model = fdt_str(dtb, 0, "model");
+	con_str("MODEL", model ? model : "?");
+	con_str("COMPAT", fdt_str(dtb, 0, "compatible") ? fdt_str(dtb, 0, "compatible") : "?");
+	con_hex2("SPLASH", "lo=", (uint32_t)splash_base, "MiB=", (uint32_t)(splash_size >> 20));
+	con_hex2("FBGEOM", "w=", con.w, "h=", con.h);
+	con_hex2("FBGEOM", "pitch=", con.pitch, "dflt=", con.pitch == FB_STRIDE ? 1 : 0);
+
+	/* /memory: the real bank list, which /tmp dts cannot tell us */
+	c = FDT_NOFF;
+	while (dtb && fdt_child(dtb, 0, &c)) {
+		if (!is_str(fdt_str(dtb, c, "device_type"), "memory"))
+			continue;
+		for (unsigned i = 0; i < 4; i++) {
+			uint64_t a, s;
+			if (!fdt_reg(dtb, c, i, &a, &s))
+				break;
+			con_hex2("MEM", "lo=", (uint32_t)a, "MiB=", (uint32_t)(s >> 20));
+			con_hex2("MEM", "hi=", (uint32_t)(a >> 32), 0, 0);
+		}
+	}
+
+	/* /reserved-memory: every carve-out, so XNU placement avoids the XPUs */
+	int rm;
+	if (dtb && fdt_path(dtb, "/reserved-memory", &rm)) {
+		c = FDT_NOFF;
+		int shown = 0;
+		while (fdt_child(dtb, rm, &c) && shown < 30) {
+			uint64_t a, s;
+			if (!fdt_reg(dtb, c, 0, &a, &s))
+				continue;
+			char name[9];
+			const char *n = fdt_node_name(dtb, c);
+			for (int i = 0; i < 8; i++)
+				name[i] = n[i] ? n[i] : 0;
+			name[8] = 0;
+			con_hex2(name, "lo=", (uint32_t)a, "MiB=", (uint32_t)(s >> 20));
+			shown++;
+		}
+	}
+
+	int ch;
+	const char *args = dtb && fdt_path(dtb, "/chosen", &ch) ? fdt_str(dtb, ch, "bootargs") : 0;
+	if (args)
+		con_str("BOOTARGS", args);
+}
+
+static uintptr_t fdt_ufs_base(uintptr_t dtb)
+{
+	int off;
+	uint64_t a, s;
+	if (dtb && fdt_compatible(dtb, "qcom,ufshc", &off) && fdt_reg1(dtb, off, 0, &a, &s))
+		return a;
+	return UFS_FALLBACK;
+}
+
 void shim_main(uint64_t dtb)
 {
 	struct mmu_info mi;
+	uintptr_t ufs_base;
+
+	/* Everything below is driven by the blob ABL handed over. */
+	stage = "fdt";
+	fb_setup(dtb);
+	con_clear(RED);
+	con_str("SHIM", "lemonadep fdt probe + ufs");
+	con_skip();
+	fdt_report(dtb);
+	con_skip();
 
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */
 	stage = "loader";
-	con_clear(RED);
-	con_str("SHIM", "sweet milestone 4: xnu loader");
-	con_skip();
+	con_str("LOADER", "looking for SWEETXNU payload");
 	const char *why = loader_boot(dtb);
 	con_str("LOADER", why);
 	con_skip();
 
 	/* No payload: probe the internal UFS while the MMU is still off. */
 	stage = "ufs";
-	test_ufs();
+	ufs_base = fdt_ufs_base(dtb);
+	test_ufs(ufs_base);
 	con_skip();
 	/* Keep the probe results on screen (later tests clear it); reset after 3 min. */
 	con_str("UFS", "probe done, reset in ~3 min");
@@ -417,7 +539,7 @@ void shim_main(uint64_t dtb)
 	con_hex2("PARANGE", "mmfr0=", rsr("id_aa64mmfr0_el1") & 0xf, "tg16=", (rsr("id_aa64mmfr0_el1") >> 20) & 0xf);
 	con_skip();
 	con_hex("PAR img", mmu_probe((uintptr_t)shim_main));
-	con_hex("PAR fb", mmu_probe(FB_PHYS + 0x1000));
+	con_hex("PAR fb", mmu_probe((uintptr_t)con.fb + 0x1000));
 	con_hex("PAR gic", mmu_probe(GICD_BASE));
 	con_hex("PAR 12G", mmu_probe(0x300000000UL));
 	con_skip();

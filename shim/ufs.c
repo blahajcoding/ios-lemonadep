@@ -13,8 +13,6 @@
 #include "console.h"
 #include "ufs.h"
 
-#define UFS_BASE	0x01d84000UL	/* ufshc@1d84000, sweet live FDT */
-
 #define REG_CAP		0x00
 #define REG_VER		0x08
 #define REG_IS		0x20
@@ -30,10 +28,13 @@
 #define HCS_UTRLRDY	(1u << 1)
 #define HCS_UCRDY	(1u << 3)
 
-#define BLOCK		4096u
+#define MAX_BLOCK	4096u
 
-static inline uint32_t ufs_rd(uint32_t off) { return *(volatile uint32_t *)(UFS_BASE + off); }
-static inline void ufs_wr(uint32_t off, uint32_t v) { *(volatile uint32_t *)(UFS_BASE + off) = v; }
+static uintptr_t ufs;		/* ufshc base, from the live FDT */
+static uint32_t blk = 4096;	/* logical block size, from READ CAPACITY */
+
+static inline uint32_t ufs_rd(uint32_t off) { return *(volatile uint32_t *)(ufs + off); }
+static inline void ufs_wr(uint32_t off, uint32_t v) { *(volatile uint32_t *)(ufs + off) = v; }
 
 /* UTP transfer request descriptor (32 bytes). */
 struct utrd {
@@ -58,7 +59,7 @@ struct ucd {
 
 static struct utrd utrl[32] __attribute__((aligned(1024)));
 static struct ucd ucd __attribute__((aligned(128)));
-static uint8_t data[2 * BLOCK] __attribute__((aligned(4096)));
+static uint8_t data[2 * MAX_BLOCK] __attribute__((aligned(4096)));
 
 static uint64_t ticks(void)
 {
@@ -139,7 +140,7 @@ static uint32_t read_blocks(uint32_t lba, uint32_t count, void *buf)
 {
 	uint8_t cdb[10] = { 0x28, 0, lba >> 24, lba >> 16, lba >> 8, lba, 0, count >> 8, count, 0 };
 	uint32_t ocs, st;
-	return scsi(0, cdb, sizeof(cdb), buf, count * BLOCK, &ocs, &st);
+	return scsi(0, cdb, sizeof(cdb), buf, count * blk, &ocs, &st);
 }
 
 static uint64_t le64(const uint8_t *p)
@@ -167,7 +168,7 @@ static const char *fs_type(uint32_t lba)
 static void list_partitions(uint32_t entry_lba, uint32_t nent)
 {
 	static uint8_t ents[128 * 128] __attribute__((aligned(4096)));
-	uint32_t blocks = (nent * 128 + BLOCK - 1) / BLOCK;
+	uint32_t blocks = (nent * 128 + blk - 1) / blk;
 	if (read_blocks(entry_lba, blocks, ents)) {
 		con_str("UFS PART", "read error");
 		return;
@@ -183,18 +184,20 @@ static void list_partitions(uint32_t entry_lba, uint32_t nent)
 			name[c] = (ch >= 32 && ch < 127) ? ch : (ch ? '?' : 0);
 		}
 		name[16] = 0;
-		if (((last - first + 1) >> 8) < 64)	/* keep the screen to the big ones */
+		uint64_t mib = (last - first + 1) * (blk >> 10) >> 10;
+		if (mib < 64)	/* keep the screen to the big ones */
 			continue;
-		con_hex2(name, "lba=", (uint32_t)first, "MiB=", (uint32_t)((last - first + 1) >> 8));
+		con_hex2(name, "lba=", (uint32_t)first, "MiB=", (uint32_t)mib);
 		if (!__builtin_strcmp(name, "userdata") || !__builtin_strcmp(name, "cust") ||
 		    !__builtin_strcmp(name, "cache"))
 			con_str(" fs", fs_type((uint32_t)first));
 	}
 }
 
-void test_ufs(void)
+void test_ufs(uintptr_t base)
 {
-	con_str("UFS", "milestone 5 probe (read-only)");
+	ufs = base;
+	con_hex("UFS", ufs);
 	uint32_t cap = ufs_rd(REG_CAP), hcs = ufs_rd(REG_HCS), hce = ufs_rd(REG_HCE);
 	con_hex2("UFS", "ver=", ufs_rd(REG_VER), "cap=", cap);
 	con_hex2("UFS", "hce=", hce, "hcs=", hcs);
@@ -241,17 +244,25 @@ void test_ufs(void)
 	static const uint8_t cap10[10] = { 0x25 };	/* READ CAPACITY(10) */
 	rc = scsi(0, cap10, sizeof(cap10), data, 8, &ocs, &st);
 	con_hex2("UFS CAP", "rc=", rc, "ocs/st=", ocs << 8 | st);
-	if (!rc)
-		con_hex2("UFS LUN0", "lastlba=", be32(data), "blk=", be32(data + 4));
+	if (!rc) {
+		uint32_t sz = be32(data + 4);
+		con_hex2("UFS LUN0", "lastlba=", be32(data), "blk=", sz);
+		/* Sol: do not assume LUN0 or 4096-byte sectors. */
+		if (sz != 512 && sz != 4096) {
+			con_str("UFS", "odd block size: stop");
+			return;
+		}
+		blk = sz;
+	}
 
 	/* READ(10) LBA 0, 2 blocks: protective MBR and the GPT header. */
 	static const uint8_t rd10[10] = { 0x28, 0, 0, 0, 0, 0, 0, 0, 2, 0 };
-	rc = scsi(0, rd10, sizeof(rd10), data, 2 * BLOCK, &ocs, &st);
+	rc = scsi(0, rd10, sizeof(rd10), data, 2 * blk, &ocs, &st);
 	con_hex2("UFS READ", "rc=", rc, "ocs/st=", ocs << 8 | st);
 	if (rc)
 		return;
 	con_hex2("UFS MBR", "sig=", data[510] | data[511] << 8, "type=", data[450]);
-	const uint8_t *gpt = data + BLOCK;
+	const uint8_t *gpt = data + blk;
 	char sig[9];
 	for (int i = 0; i < 8; i++)
 		sig[i] = (gpt[i] >= 32 && gpt[i] < 127) ? gpt[i] : '.';

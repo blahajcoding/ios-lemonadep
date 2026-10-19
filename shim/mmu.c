@@ -12,6 +12,7 @@
  *   - the splash framebuffer block is Normal non-cacheable (write-combining)
  */
 #include <stdint.h>
+#include "console.h"
 #include "mmu.h"
 
 #define PG_SHIFT	14
@@ -90,7 +91,7 @@ int mmu_enable(struct mmu_info *info)
 	zero_table(l2);
 	for (uint64_t i = 0; i < (8UL << 30) >> BLK_SHIFT; i++)
 		l2[i] = (i << BLK_SHIFT) | DEV_FLAGS | D_BLOCK;
-	l2[FB_PHYS >> BLK_SHIFT] = (FB_PHYS & ~(BLK_SIZE - 1)) | NC_FLAGS | D_BLOCK;
+	l2[(uintptr_t)con.fb >> BLK_SHIFT] = ((uintptr_t)con.fb & ~(BLK_SIZE - 1)) | NC_FLAGS | D_BLOCK;
 
 	/* L3 for each block that holds part of the image */
 	for (uint64_t blk = img_lo >> BLK_SHIFT; blk <= (img_hi - 1) >> BLK_SHIFT; blk++) {
