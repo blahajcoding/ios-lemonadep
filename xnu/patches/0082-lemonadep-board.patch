@@ -302,6 +302,41 @@ index 08baa1b..51af60c 100644
  #include "sweet_pthread_compat.h"
  #include "sweet_libpthread/kern/kern_synch.c"
  #endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/sweet_hfs/core/hfs_catalog.c b/bsd/sweet_hfs/core/hfs_catalog.c
+index fedfc15..29b97b7 100644
+--- a/bsd/sweet_hfs/core/hfs_catalog.c
++++ b/bsd/sweet_hfs/core/hfs_catalog.c
+@@ -757,7 +757,7 @@ falsematch:
+ }
+ 
+ 
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if (defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_LEMONADEP))
+ /*
+  * SWEET: hard links made by Linux tools lack kHFSHasLinkChainBit and every
+  * lookup of them repairs (in memory) and reports it again; the console
+diff --git a/bsd/sweet_hfs/core/hfs_vfsutils.c b/bsd/sweet_hfs/core/hfs_vfsutils.c
+index 5cd3dd1..f367e31 100644
+--- a/bsd/sweet_hfs/core/hfs_vfsutils.c
++++ b/bsd/sweet_hfs/core/hfs_vfsutils.c
+@@ -202,7 +202,7 @@ OSErr hfs_MountHFSPlusVolume(struct hfsmount *hfsmp, HFSPlusVolumeHeader *vhp,
+ 	/* don't mount a writable volume if its dirty, it must be cleaned by fsck_hfs */
+ 	if ((hfsmp->hfs_flags & HFS_READ_ONLY) == 0 && hfsmp->jnl == NULL &&
+ 	    (SWAP_BE32(vhp->attributes) & kHFSVolumeUnmountedMask) == 0) {
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if (defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_LEMONADEP))
+ 		/*
+ 		 * SWEET never unmounts its root (no clean shutdown yet), and
+ 		 * there is no fsck_hfs before the root mount: take it anyway.
+@@ -215,7 +215,7 @@ OSErr hfs_MountHFSPlusVolume(struct hfsmount *hfsmp, HFSPlusVolumeHeader *vhp,
+ 			printf("hfs_mounthfsplus: cannot mount dirty non-journaled volumes\n");
+ 		}
+ 		return (EINVAL);
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if (defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_LEMONADEP))
+ 		}
+ #endif
+ 	}
 diff --git a/bsd/sys/pthread_internal.h b/bsd/sys/pthread_internal.h
 index 135405e..e5e8cf2 100644
 --- a/bsd/sys/pthread_internal.h
@@ -328,19 +363,19 @@ index 90cd9fc..8a0bddc 100644
  			/*
  			 * SWEET: HFS has no RENAME_SWAP, which Foundation's atomic
  			 * writes use (usermanagerd: "Failed to atomically swap writing
-diff --git a/bsd/vm/vm_unix.c b/bsd/vm/vm_unix.c
-index 636bd3d..842e7c6 100644
---- a/bsd/vm/vm_unix.c
-+++ b/bsd/vm/vm_unix.c
-@@ -1755,7 +1755,7 @@ out:
- 	return error;
- }
+diff --git a/bsd/vfs/vfs_subr.c b/bsd/vfs/vfs_subr.c
+index b975a24..78d38fd 100644
+--- a/bsd/vfs/vfs_subr.c
++++ b/bsd/vfs/vfs_subr.c
+@@ -1257,7 +1257,7 @@ vfs_mountroot(void)
  
--#if !XNU_TARGET_OS_OSX || defined(ARM64_BOARD_CONFIG_SWEET)
-+#if !XNU_TARGET_OS_OSX || (defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_LEMONADEP))
- /*
-  * SWEET runs the iOS userland on the macOS config: SpringBoard calls
-  * pid_hibernate when an app leaves the foreground, and nosys (SIGSYS)
+ 		mp = vfs_rootmountalloc_internal(vfsp, "root_device");
+ 		mp->mnt_devvp = rootvp;
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if (defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_LEMONADEP))
+ 		/*
+ 		 * SWEET has no data volume: /private/var lives on the root, so
+ 		 * boot-arg rootrw=1 mounts it read-write from the start.
 diff --git a/config/MASTER.arm64.lemonadep b/config/MASTER.arm64.lemonadep
 new file mode 100644
 index 0000000..759a1d1

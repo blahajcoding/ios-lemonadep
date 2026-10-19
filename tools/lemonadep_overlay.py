@@ -14,6 +14,11 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "."
 
 SOURCES = (".c", ".h", ".cpp", ".s", ".def", "Makefile")
 
+# vm_unix.c needs struct pid_hibernate_args, which only the macOS 13.5 config's
+# SDK headers provide; skip it so patch 0070 stays sweet-only and syscall 435
+# remains nosys for lemonadep until the userland milestone needs it.
+SKIP = {"bsd/vm/vm_unix.c"}
+
 # Order matters: the negated form first, then the plain one.
 GUARDS = [
     ("defined(ARM64_BOARD_CONFIG_SWEET)",
@@ -73,6 +78,8 @@ def main():
             if not fn.endswith(SOURCES) and fn != "Makefile":
                 continue
             p = os.path.join(dirpath, fn)
+            if os.path.relpath(p, ROOT) in SKIP:
+                continue
             try:
                 s = open(p).read()
             except (UnicodeDecodeError, IsADirectoryError):
