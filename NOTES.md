@@ -1,5 +1,47 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Lemonadep architecture handoff (2026-10-19, round 1)
+
+- Scope: architecture only; user executes engineering. No implementation,
+  device commands, builds, CI runs, or target boot results in this round.
+  The sweet milestones below are reference results, not lemonadep results.
+- Decision: selectively reuse the FDT-driven shim and board-profile design
+  from lvyufeng/ios-gauguin, commit
+  fe32fc4310fdb33f9394308ed3dccef0d0146de0, with credit. Add LEMONADEP;
+  preserve SWEET defaults. Do not import gauguin PMIC/touch/USB settings.
+- Observed in that commit: shim/mmu.c introduces L1_SHIFT=30 and passes an
+  L1 table to TTBR0 while retaining the 16-KiB-granule TCR with T0SZ=28.
+  This geometry is invalid: 16-KiB L2 blocks are 32 MiB, L1 spans 64 GiB,
+  and T0SZ=28 starts at L2. Exclude that MMU rewrite; validate any mapping
+  changes against the existing granule and AT/PAR probes.
+- Highest-risk hypothesis, NOT measured on lemonadep: ABL leaves UFS powered,
+  linked, and able to DMA to shim-owned physical buffers without new
+  clock/PHY/SMMU setup. Test with a no-XNU, read-only shim: HCE/HCS, idle
+  doorbells, verified UTRL ownership, TUR, capacity, and bounded GPT reads.
+  Discover LUN/block size; do not assume LUN0 or 4096-byte blocks. HCE/HCS
+  alone do not prove DMA works. No SCSI writes or controller/PHY resets.
+- First gates: (1) diagnostic-only live-FDT console and stock-compatible
+  temporary boot image; (2) read-only UFS plus boot-CPU 16-KiB, GIC Group1,
+  virtual-timer and SGI probes; (3) LEMONADEP XNU, cpus=1, RAM-disk root,
+  hardware drivers gated off. Local checks precede one CI build. Defer SMP,
+  PMIC, touch, USB and root installation. Park diagnostic shim rather than
+  writing sweet-specific reset registers.
+- Placement remains undecided. Obtain full live /memory*/reg bank pairs,
+  FDT reservation map and /reserved-memory (including dynamic pools and
+  allocation constraints), shim/FDT/initrd/table/stack ranges, and the
+  actual active framebuffer address/size/stride/format. Subtract exclusions,
+  choose a conservative contiguous 32-MiB-aligned window, and bound-check
+  every destination. FDT does not prove XPU accessibility: validate the
+  candidate with bounded memory probes before loading XNU. Do not expose
+  all advertised 8 GB to XNU initially.
+- Safety: only temporary fastboot boot images; Android, GPT, recovery,
+  bootloaders, modem, persist and backups stay intact. Disable UFS writes
+  and persistent console logging (ufsrw=0 sweetlog=0), and gate unsupported
+  hardware initialization for the first XNU smoke boot. No existing sweet
+  userdata/root offsets or log-tail writes apply to this target.
+- Next engineer action: produce the diagnostic-only FDT/framebuffer shim;
+  return its live memory/reservation/placement output before selecting RAM.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
