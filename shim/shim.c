@@ -63,6 +63,11 @@ static inline void wr8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
 extern char secondary_entry[];
 
 static const char *stage;	/* set at runtime: no absolute pointers in data */
+/* Probing RAM the FDT does not describe is expected to fault on some ranges:
+ * with this set, a sync abort is recorded and the faulting instruction skipped
+ * instead of taking the panic path. */
+static volatile int fault_tolerant;
+static volatile uint64_t fault_esr, fault_far, fault_elr, fault_stage_id;
 static volatile uint64_t sec_mpidr[NR_CPUS];
 static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
 static volatile uint32_t irq_count, irq_other, irq_last;
@@ -145,6 +150,13 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 {
 	if (slot == 5) {	/* IRQ from current EL, SPx */
 		irq_handler();
+		return;
+	}
+	if ((slot & 3) == 0 && fault_tolerant) {	/* data/inst abort while probing */
+		fault_esr = rsr("esr_el1");
+		fault_far = rsr("far_el1");
+		fault_elr = rsr("elr_el1");
+		wsr("elr_el1", fault_elr + 4);
 		return;
 	}
 	con_clear(BLUE);
@@ -572,9 +584,14 @@ static void hm_probe(const char *label, uint64_t pa)
 	volatile uint64_t *p = (volatile uint64_t *)pa;
 	uint64_t pat = 0xa5a50000a5a5a5a5ULL ^ pa;
 
+	fault_esr = fault_far = 0;
+	__asm__ volatile("dsb sy" ::: "memory");
 	*p = pat;
 	__asm__ volatile("dsb sy" ::: "memory");
-	con_hex2(label, "pa_lo=", (uint32_t)pa, "ok=", *p == pat);
+	uint64_t rb = *p;
+	con_hex2(label, "pa_lo=", (uint32_t)pa, "ok=", rb == pat && !fault_esr);
+	if (fault_esr)
+		con_hex2("FAULT", "far=", (uint32_t)fault_far, "esr=", (uint32_t)fault_esr);
 }
 
 /* FDT memreserve block: pairs of (addr, size) ending in 0,0. */
@@ -750,8 +767,10 @@ void shim_main(uint64_t dtb)
 	/* Keep the probe results on screen (later tests clear it); reset after 3 min. */
 	con_page(RED);
 	con_str("SHIM", "page 3: irq, highmem, luns");
+	fault_tolerant = 1;	/* a bad probe prints FAULT, not a panic page */
 	test_gic(dtb);
 	qual_report(dtb);
+	fault_tolerant = 0;
 	con_str("UFS", "probe done, reset in ~3 min");
 	delay_ms(180000);
 	reset(20);
