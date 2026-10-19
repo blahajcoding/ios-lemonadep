@@ -501,10 +501,13 @@ static void mem_report(uintptr_t dtb, uintptr_t self)
 		rs[j + 1] = k;
 	}
 
+	/* /memory carries one reg entry per bank; ABL splits the 8 GiB in two. */
 	c = FDT_NOFF;
-	while (dtb && fdt_child(dtb, 0, &c) && nb < 8) {
+	while (dtb && fdt_child(dtb, 0, &c)) {
 		uint64_t a, s;
-		if (name_is(fdt_node_name(dtb, c), "memory") && fdt_reg(dtb, c, 0, &a, &s)) {
+		if (!name_is(fdt_node_name(dtb, c), "memory"))
+			continue;
+		for (unsigned k = 0; nb < 8 && fdt_reg(dtb, c, k, &a, &s); k++) {
 			banks[nb][0] = a;
 			banks[nb][1] = s;
 			nb++;
@@ -529,8 +532,16 @@ static void mem_report(uintptr_t dtb, uintptr_t self)
 
 	con_hex2("MEMSET", "banks=", nb, "static=", nr);
 	con_hex2("MEMSET", "dynpools=", dyn, "gaps=", ng);
-	for (int i = 0; i < ng; i++)
-		con_hex2("FREE", "lo=", (uint32_t)gaps[i].base, "MiB=", (uint32_t)(gaps[i].size >> 20));
+	for (int i = 0; i < nb; i++) {
+		con_hex2("BANK", "lo=", (uint32_t)banks[i][0], "hi=", (uint32_t)(banks[i][0] >> 32));
+		con_hex2("BANK", "MiB=", (uint32_t)(banks[i][1] >> 20), "end=",
+			 (uint32_t)((banks[i][0] + banks[i][1]) >> 32));
+	}
+	for (int i = 0; i < ng; i++) {
+		con_hex2("FREE", "lo=", (uint32_t)gaps[i].base, "hi=", (uint32_t)(gaps[i].base >> 32));
+		con_hex2("FREE", "MiB=", (uint32_t)(gaps[i].size >> 20), "end=",
+			 (uint32_t)((gaps[i].base + gaps[i].size) >> 32));
+	}
 	con_hex2("SHIM", "at=", (uint32_t)self, "hi=", (uint32_t)((uint64_t)self >> 32));
 }
 
