@@ -454,6 +454,86 @@ static uint32_t fdt_size_prop(uintptr_t fdt, int off)
 	return 0;
 }
 
+
+struct range {
+	uint64_t base, size;
+};
+
+static int name_is(const char *n, const char *p)
+{
+	while (*p)
+		if (*n++ != *p++)
+			return 0;
+	return 1;
+}
+
+/* Free windows inside the RAM banks once every addressed carve-out is cut out.
+ * Sol needs these to place XNU; dynamic pools have no address, so they are only
+ * counted (ABL allocates them below everything we would pick). */
+static void mem_report(uintptr_t dtb, uintptr_t self)
+{
+	struct range rs[64], gaps[8];
+	uint64_t banks[8][2];
+	int nr = 0, nb = 0, dyn = 0, ng = 0, rm, c;
+
+	if (dtb && fdt_path(dtb, "/reserved-memory", &rm)) {
+		c = FDT_NOFF;
+		while (fdt_child(dtb, rm, &c) && nr < 64) {
+			uint64_t a, s;
+			if (fdt_reg(dtb, c, 0, &a, &s)) {
+				if (s) {
+					rs[nr].base = a;
+					rs[nr].size = s;
+					nr++;
+				}
+			} else if (fdt_size_prop(dtb, c)) {
+				dyn++;
+			}
+		}
+	}
+	for (int i = 1; i < nr; i++) {
+		struct range k = rs[i];
+		int j = i - 1;
+		while (j >= 0 && rs[j].base > k.base) {
+			rs[j + 1] = rs[j];
+			j--;
+		}
+		rs[j + 1] = k;
+	}
+
+	c = FDT_NOFF;
+	while (dtb && fdt_child(dtb, 0, &c) && nb < 8) {
+		uint64_t a, s;
+		if (name_is(fdt_node_name(dtb, c), "memory") && fdt_reg(dtb, c, 0, &a, &s)) {
+			banks[nb][0] = a;
+			banks[nb][1] = s;
+			nb++;
+		}
+	}
+
+	for (int b = 0; b < nb; b++) {
+		uint64_t cur = banks[b][0], end = banks[b][0] + banks[b][1];
+		for (int i = 0; i <= nr; i++) {
+			uint64_t stop = i < nr ? rs[i].base : end;
+			if (stop > end)
+				stop = end;
+			if (stop > cur && stop - cur >= (1ULL << 28) && ng < 8) {
+				gaps[ng].base = cur;
+				gaps[ng].size = stop - cur;
+				ng++;
+			}
+			if (i < nr && rs[i].base + rs[i].size > cur)
+				cur = rs[i].base + rs[i].size;
+		}
+	}
+
+	con_hex2("MEMSET", "banks=", nb, "static=", nr);
+	con_hex2("MEMSET", "dynpools=", dyn, "gaps=", ng);
+	for (int i = 0; i < ng; i++)
+		con_hex2("FREE", "lo=", (uint32_t)gaps[i].base, "MiB=", (uint32_t)(gaps[i].size >> 20));
+	con_hex2("SHIM", "at=", (uint32_t)self, "hi=", (uint32_t)((uint64_t)self >> 32));
+}
+
 static void fdt_report(uintptr_t dtb)
 {
 	int c;
@@ -578,7 +658,12 @@ void shim_main(uint64_t dtb)
 	con_str("SHIM", "lemonadep fdt probe + ufs");
 	con_skip();
 	fdt_report(dtb);
+	con_page(RED);
+	con_str("SHIM", "page 2: cpu, gic, mem, ufs");
+	mem_report(dtb, (uintptr_t)shim_main);
+	con_skip();
 	cpu_report(dtb);
+	con_str("REPORT", "end");
 	con_skip();
 
 	/* An xnu payload in the ramdisk means: boot it (MMU stays off). */

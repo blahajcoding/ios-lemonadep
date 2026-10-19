@@ -473,3 +473,37 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      cpu_init, before arm_vm_init.
   5. panic hook at top of panic_trap_to_debugger: va_copy + _doprnt(fmt, &copy, sweet_early_putc, 16).
   Verify with tools/xnu-cc.py (compile+symbols) and patch-order simulation before the single CI run.
+
+## lemonadep live-FDT + UFS probe (2026-10-19, observed on LE2123)
+
+Boot route that works on this phone: `tools/lem-boot.sh shim/out/shim-boot.img
+--wait-adb`. Fastboot on lemonadep only accepts a command fired immediately
+after ABL enters fastboot; a host that waits even a few seconds gets
+"Sending 'boot.img'" followed by a hang and a "Press any key to shutdown" screen.
+`fastboot boot` of a v2 image with the platform dtb is accepted.
+
+Observed page 1 (/home/venus/dtb is a valid stand-in; ABL passes its own):
+  MODEL Qualcomm Technologies, Inc. Lahaina, compatible qcom,lahaina
+  SPLASH 0xE1000000 35 MiB (cont_splash_region; sweet's 0x9C000000 is wrong)
+  FBGEOM 1440x3216 pitch 5760 (from the qcom,mdss-dsi-panel node)
+  MEM one bank at 0x80000000, 0x1C00 MiB = 7 GiB
+  ~40 /reserved-memory nodes, static and dynamic both reported
+
+Observed page 2:
+  CPU   EL1, MIDR 0x412FD050 (A55), MPIDR 0x81000000, CNTFRQ 19200000
+  MMFR0 parange=2 (40-bit PA), TG16=1 (16 KiB granule available)
+  SCTLR 0x30C50838
+  GIC   gicd 0x17A00000, gicr 0x17A60000, 8 redistributors, stride 0x20000,
+        affinities 0x100..0x800, Last=1, same layout as sweet
+  PSCI  method smc
+  UFS   ver 0x00000300, cap 0x1587031F, HCS 0x0000101F, IS 0x00000400,
+        ICE present, UTRLBA 0x1F150000 (ABL left its rings in place)
+  UFS   TUR ok, READ CAPACITY ok: LUN0 lastlba 0x1C4B77 blk 4096, READ ok,
+        MBR sig 0xAA55, GPT 32 entries, partition list parsed (userdata 78 GiB)
+  LOADER no payload (expected: ramdisk empty)
+
+Conclusion: ABL hands over a working UFS controller with DMA, so the sweet
+UFSHCI-only driver carries without clock/PHY programming (Sol round-1 risk 1
+is resolved positively for reads). The XNU placement question is unchanged and
+now has a free-gap report: page 2 prints MEMSET (bank/static/dynamic counts)
+and FREE (base + MiB) for every window >= 256 MiB after all addressed carve-outs.

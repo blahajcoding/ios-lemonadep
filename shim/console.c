@@ -57,7 +57,9 @@ static void put_char(int col, char ch, uint32_t fg)
 		return;
 	const unsigned char *g = font8x16[ch - 0x20];
 	int x0 = MARGIN + col * CH_W, y0 = MARGIN + row * CH_H;
-	if (x0 + CH_W > (int)con.w || y0 + CH_H > (int)con.h)
+	if (x0 + CH_W > (int)con.w)
+		return;
+	if (y0 + CH_H > (int)con.h)
 		return;
 	for (int gy = 0; gy < 16; gy++)
 		for (int gx = 0; gx < 8; gx++) {
@@ -84,6 +86,12 @@ static void fmt_hex(char *buf, uint64_t v, int digits)
 	for (int i = 0; i < digits; i++)
 		buf[i] = hex[(v >> (4 * (digits - 1 - i))) & 0xf];
 	buf[digits] = 0;
+}
+
+/* Start a fresh page: the report is longer than one screen. */
+void con_page(uint32_t bg)
+{
+	con_clear(bg);
 }
 
 void con_skip(void)
