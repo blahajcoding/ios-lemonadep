@@ -318,67 +318,73 @@ static uint32_t vtime_id = VTIMER_INTID;
 
 static void test_gic(uintptr_t dtb)
 {
+	uint64_t frq = rsr("cntfrq_el0"), daif = rsr("daif");
+	uint64_t c0 = rsr("cntvct_el0");
+	uint64_t t = now() + frq / 1000;	/* 1 ms */
+	while (now() < t)
+		;
+	uint64_t c1 = rsr("cntvct_el0");
+
 	vtime_id = fdt_vtimer_intid(dtb);
 	con_hex2("VTIMER", "intid=", vtime_id, "ppo=", vtime_id - 16);
+	con_hex2("DAIF", "daif=", daif, "hz=", frq);
+	con_hex2("CNTVCT", "lo=", (uint32_t)c0, "delta=", (uint32_t)(c1 - c0));
+	con_hex2("CNTV", "ctl=", rsr("cntv_ctl_el0"), "tval=", rsr("cntv_tval_el0"));
+
+	uint32_t dctlr = rd32(gicd_base);
+	uintptr_t r = find_gicr();
+	if (!r) {
+		con_str("GICR", "not found");
+		return;
+	}
+	gicr_self = r;
+	con_hex2("GICD", "ctlr=", dctlr, "ticlr=", rd32(gicd_base + 4));
+	con_hex2("GICR", "waker=", rd32(r + GICR_WAKER), "grp=", rd32(r + GICR_IGROUPR0));
+	con_hex2("GICR", "en=", rd32(r + GICR_ISENABLER0), "pend=", rd32(r + GICR_ISPENDR0));
+	con_hex2("ICC", "ctlr=", rsr("icc_ctlr_el1"), "pmr=", rsr("icc_pmr_el1"));
+	con_hex2("ICC", "grp1=", rsr("icc_igrpen1_el1"), "isr=", rsr("isr_el1"));
+
 	stage = "gic sre";
 	uint64_t sre = rsr("icc_sre_el1");
 	if (!(sre & 1)) {
 		wsr("icc_sre_el1", sre | 1);
 		isb();
 	}
-	if (!(rsr("icc_sre_el1") & 1)) {
-		con_str("GIC", "no sysreg iface, skip");
-		return;
-	}
+	con_str("STEP", "sre");
 
-	stage = "gic dist";
-	uint32_t dctlr = rd32(gicd_base);
-	/* Non-secure view (DS=0): bit0 EnableGrp1, bit1 EnableGrp1A, bit4 ARE_NS; Linux writes 0x13 */
-	wr32(gicd_base, dctlr | 0x13);
-	gicd_wait_rwp();
-	con_hex2("GICD", "was=", dctlr, "now=", rd32(gicd_base));
-
-	stage = "gic redist";
-	uintptr_t r = find_gicr();
-	if (!r) {
-		con_str("GICR", "not found");
-		return;
-	}
 	uint32_t waker = rd32(r + GICR_WAKER);
 	if (waker & 2) {
 		wr32(r + GICR_WAKER, waker & ~2U);
 		for (int i = 0; i < 100000 && (rd32(r + GICR_WAKER) & 4); i++)
 			;
 	}
-	gicr_self = r;
-	con_hex2("GICR", "base=", r, "waker=", rd32(r + GICR_WAKER));
+	stage = "gic dist";
+	wr32(gicd_base, dctlr | 0x13);
+	gicd_wait_rwp();
+	con_str("STEP", "dist");
 
 	stage = "gic config";
-	uint32_t grp = rd32(r + GICR_IGROUPR0);
 	wr32(r + GICR_IGROUPR0, 0xffffffff);	/* NS view: secure bits are WI */
-	uint32_t en_before = rd32(r + GICR_ISENABLER0);
-	uint32_t pri_before = rd32(r + GICR_IPRIORITYR + 16);	/* INTIDs 16..19 */
 	for (int id = 0; id < 32; id++)
 		wr8(r + GICR_IPRIORITYR + id, 0xa0);
-	wr32(r + GICR_ISENABLER0, (1U << vtime_id) | (1U << PTIMER_INTID) | (1U << SGI_INTID));
-	con_hex2("ENABLE", "was=", en_before, "now=", rd32(r + GICR_ISENABLER0));
-	(void)grp;
-	(void)pri_before;
+	con_str("STEP", "prio");
 
+	stage = "gic icc";
 	uint64_t ctlr = rsr("icc_ctlr_el1");
 	wsr("icc_ctlr_el1", ctlr & ~2ULL);	/* EOImode 0: EOIR also deactivates */
 	wsr("icc_pmr_el1", 0xf0);
 	wsr("icc_bpr1_el1", 0);
 	wsr("icc_igrpen1_el1", 1);
 	isb();
-	con_hex2("ICC", "ctlr=", ctlr, "grpen1=", rsr("icc_igrpen1_el1"));
-
+	con_hex2("ICC1", "ctlr=", ctlr, "grp1=", rsr("icc_igrpen1_el1"));
+	stage = "gic enable";
+	wr32(r + GICR_ISENABLER0, 1U << vtime_id);
+	con_hex2("ENABLE", "now=", rd32(r + GICR_ISENABLER0), "pend=", rd32(r + GICR_ISPENDR0));
 	stage = "gic vtimer";
 	irq_window("VTIMER", r, (int)vtime_id);
 	stage = "gic sgi";
 	irq_window("SGI1", r, SGI_INTID);
-	wr32(r + GICR_ICENABLER0, 0xffffffff);
-	isb();
+	stage = "gic done";
 }
 
 /* ---- main ---- */
