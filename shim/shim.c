@@ -34,8 +34,10 @@ static uint64_t gicr_size = 0x100000UL;
 #define GICR_ISPENDR0		(GICR_SGI + 0x200)
 #define GICR_ISACTIVER0		(GICR_SGI + 0x300)
 #define GICR_ICFGR1		(GICR_SGI + 0xc04)
+#define GICR_ICFGR0		(GICR_SGI + 0xc00)
+#define GICR_IGRPMODR0		(GICR_SGI + 0xd00)
 #define VTIMER_INTID		27	/* fallback; the live FDT says PPI 11 = 16+11 */
-#define PTIMER_INTID		18	/* DT: <GIC_PPI 2 ...> */
+#define PTIMER_INTID		30	/* DT: <GIC_PPI 14 ...> */
 #define SGI_INTID		1
 
 #define PSCI_VERSION		0x84000000UL
@@ -396,6 +398,15 @@ static void test_gic(uintptr_t dtb)
 	irq_window("VTIMER", r, (int)vtime_id);
 	stage = "gic sgi";
 	irq_window("SGI1", r, SGI_INTID);
+
+	con_hex2("PRIO", "27=", rd8(r + GICR_IPRIORITYR + vtime_id),
+	    "1=", rd8(r + GICR_IPRIORITYR + SGI_INTID));
+	con_hex2("ICFGR", "1=", rd32(r + GICR_ICFGR1), "icfgr0=", rd32(r + GICR_ICFGR0));
+	con_hex2("IGRPMOD", "0=", rd32(r + GICR_IGRPMODR0), "pmr=", rsr("icc_pmr_el1"));
+
+	/* Second PPI: physical timer, in case the virtual one is not ours. */
+	wr32(r + GICR_ISENABLER0, (1U << vtime_id) | (1U << PTIMER_INTID));
+	irq_window("PTIMER", r, PTIMER_INTID);
 
 	/* Decisive test: is 27 pending but not signalled, or signalled and lost? */
 	wsr("cntv_tval_el0", frq / 100);
