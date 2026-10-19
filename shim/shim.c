@@ -439,6 +439,21 @@ static void fb_setup(uintptr_t dtb)
 		con_disable();
 }
 
+/* size = <hi lo> or <lo>; return the low 32 bits. */
+static uint32_t fdt_size_prop(uintptr_t fdt, int off)
+{
+	uint32_t len = 0;
+	const void *v = fdt_prop(fdt, off, "size", &len);
+
+	if (!v)
+		return 0;
+	if (len >= 8)	/* <hi lo> cells, we run below 4 GiB */
+		return __builtin_bswap32(*(const uint32_t *)((uintptr_t)v + 4));
+	if (len == 4)
+		return __builtin_bswap32(*(const uint32_t *)v);
+	return 0;
+}
+
 static void fdt_report(uintptr_t dtb)
 {
 	int c;
@@ -473,16 +488,21 @@ static void fdt_report(uintptr_t dtb)
 	if (dtb && fdt_path(dtb, "/reserved-memory", &rm)) {
 		c = FDT_NOFF;
 		int shown = 0;
-		while (fdt_child(dtb, rm, &c) && shown < 30) {
-			uint64_t a, s;
-			if (!fdt_reg(dtb, c, 0, &a, &s))
-				continue;
+		while (fdt_child(dtb, rm, &c) && shown < 40) {
+			uint64_t a = 0, s = 0;
+			int have_reg = fdt_reg(dtb, c, 0, &a, &s);
+			if (!have_reg) {
+				/* Dynamic pool: ABL decides the address, the dtb only sizes it. */
+				s = (uint64_t)fdt_size_prop(dtb, c) << 20;
+				if (!s)
+					continue;
+			}
 			char name[9];
 			const char *n = fdt_node_name(dtb, c);
 			for (int i = 0; i < 8; i++)
 				name[i] = n[i] ? n[i] : 0;
 			name[8] = 0;
-			con_hex2(name, "lo=", (uint32_t)a, "MiB=", (uint32_t)(s >> 20));
+			con_hex2(name, "lo=", (uint32_t)a, "MiB=", (uint32_t)s);
 			shown++;
 		}
 	}
