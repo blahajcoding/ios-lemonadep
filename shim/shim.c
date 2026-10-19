@@ -71,7 +71,7 @@ static volatile int fault_tolerant;
 static volatile uint64_t fault_esr, fault_far, fault_elr, fault_stage_id;
 static volatile uint64_t sec_mpidr[NR_CPUS];
 static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
-static volatile uint32_t irq_count, irq_other, irq_last;
+static volatile uint32_t irq_count, irq_other, irq_last, irq_spur;
 static uint32_t vtime_id;
 static uintptr_t gicr_self;
 static volatile int irq_src;
