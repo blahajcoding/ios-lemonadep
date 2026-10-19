@@ -1,6 +1,73 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Lemonadep architecture handoff (2026-10-19, round 1)
+## Lemonadep architecture handoff (2026-10-19, round 2)
+
+- Scope: research decisions only; user implements. This round inspected
+  loader/ADT sources and early XNU patches. No new kernel build, CI run,
+  device command, or independently observed lemonadep boot result.
+- User reports temporary shim boots, EL1 Cortex-A55 MIDR 0x412fd050,
+  MPIDR 0x81000000, CNTFRQ 19200000, 40-bit PA and 16-KiB support;
+  GICD 0x17a00000/GICR 0x17a60000, eight redistributors, PSCI smc.
+  User reports TUR/capacity/READ(10)/GPT reads work using inherited UFS.
+  This closes the inherited read-path hypothesis, not high-PA DMA or writes.
+- Arithmetic corrections requiring raw-value recheck: the reported RAM
+  banks total 5015 MiB (0x139700000), not 7 GiB; 0x1c0000000 is the highest
+  physical address. A 35-MiB splash at 0xe4000000 ends at 0xe6300000;
+  claimed free start 0xe4700000 is only 7 MiB above its base and even
+  overlaps the 4320*2400-byte active buffer (end 0xe49e3400). Keep the
+  whole splash reservation out of the allocator. Reported LUN0 last LBA
+  0x1c4b77 with 4096-byte blocks means 7.074 GiB, inconsistent with a
+  ~78-GiB userdata on that LUN. Recheck capacity response and GPT bounds;
+  no storage installation/writes based on this inconsistent report.
+- Placement decision, conditional on complete exclusions and access probe:
+  physBase 0x100000000, memSize 0x40000000, managed interval
+  [0x100000000,0x140000000). This is the entire initial 1-GiB RAM arena,
+  not a 1-GiB kernel image plus unrelated boot buffers. Keep the existing
+  mkpayload layout: kernel segments, small mockfs Mach-O RAM disk, ADT,
+  boot_args, all 16-KiB aligned as required and below topOfKernelData;
+  topOfKernelData must stay inside the arena with allocator headroom.
+  Do not put metadata below physBase: 0x0f000000 is below reported DRAM;
+  0xf0000000 would also be outside this initial XNU-managed interval.
+- Reject bank-A 0xa0000000..0xb9700000 for XNU: shim at 0xa0081da0 plus
+  live tables/stack/FDT/input payload must survive copying. Bank-B low
+  0xc0000000..0xd17e0000 is too small for the chosen 1-GiB arena and has
+  unqualified firmware residue; not evidence of XPU protection. Reject
+  splash and every addressed/firmware reservation. Do not expose the
+  large high window wholesale: FDT absence is not proof of XPU access.
+- Configuration: new MACHINE_CONFIG=LEMONADEP and
+  ARM64_BOARD_CONFIG_LEMONADEP; explicit shared Qualcomm/non-Apple guards,
+  not a blanket SWEET alias. Preserve SWEET defaults. Build arm64/non-PAC,
+  boot A55 only, CPU reg affinity 0, cpus=1, one ADT CPU node. Keep validated
+  MMU geometry. No Apple-only registers, PMIC, USB, touch, SMP or storage
+  initialization in this milestone. Do not copy sweet's CPU clock values.
+- Patch scope: apply the 0001..0024 prefix, not all 81, then a separate
+  lemonadep adaptation overlay; optionally include 0025 for static PID1
+  heartbeat rather than the known post-mount NULL-AMFI abort. 0004/0006:
+  board/build/config; 0010/0012: early/post-TTBR framebuffer address and
+  dimensions; 0016..0018: platform compatibility, measured timer, boot CPU.
+  Widen shared guards in 0008/0013..0015/0019..0023 as needed without
+  changing their algorithms. 0001..0003/0005/0007/0009/0011/0024 have no
+  board-specific behavioral change needed. Keep original patch files
+  byte-identical; adaptation is appended. Stage libpthread and BearSSL.
+  0026/0027 HFS/MD5, 0028 UFS root, and 0078 SMP are deferred; mockfs is
+  sufficient for the requested RAM-disk-root milestone.
+- Next gates: enumerate every memory/reserved-memory reg tuple plus FDT
+  memreserve and loader/input/stack/table ranges; probe the selected high
+  interval, 64-bit address plumbing, 16-KiB translations and high-PA code
+  execution/cache handoff. Prove repeated CNTV interrupts actually enter
+  EL1 Group1 IRQ handler via ICC_IAR1_EL1/EOI and wake WFI at the measured
+  period; discover INTID, do not assume sweet's 19. No Group0 changes.
+  Missing virtual-timer delivery despite readable registers is the main
+  time-wasting unverified kernel-hang failure. SGI/SMP and high-PA UFS DMA
+  are not prerequisites for this single-CPU RAM-disk milestone.
+- Next engineer actions: one qualification shim boot; implement profile,
+  early-prefix overlay and payload bounds; local checks then one CI build
+  and temporary fastboot boot with rd=md0, cpus=1, sweetlog=0, ufsrw=0.
+  Require Darwin banner, periodic timer progress and mockfs md0 mount;
+  static PID1 heartbeat is the useful extra check with 0025. Never flash
+  or initialize unsupported hardware for this milestone.
+
+## Lemonadep architecture handoff (2026-10-19, round 1; superseded above)
 
 - Scope: architecture only; user executes engineering. No implementation,
   device commands, builds, CI runs, or target boot results in this round.
