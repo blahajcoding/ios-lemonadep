@@ -72,6 +72,7 @@ static volatile uint64_t sec_mpidr[NR_CPUS];
 static volatile uint64_t sec_probe[4];	/* CPU1 redistributor write test */
 static volatile uint32_t irq_count, irq_other, irq_last;
 static uint32_t vtime_id;
+static uintptr_t gicr_self;
 static volatile int irq_src;
 
 /* ICC_SGI1R_EL1 value targeting the calling core only. */
@@ -134,10 +135,13 @@ static void irq_handler(void)
 	if (id >= 1020 && id <= 1023)
 		return;	/* spurious */
 	irq_last = id;
-	if (id == (uint32_t)irq_src)
+	if (id == (uint32_t)irq_src) {
 		irq_count++;
-	else
-		irq_other++;
+	} else if (++irq_other == 2000 && gicr_self) {
+		/* A level source we did not expect would freeze the run: mask it. */
+		wr32(gicr_self + GICR_ICENABLER0, 1U << id);
+		irq_last = 0x80000000U | id;
+	}
 	if (id == vtime_id)
 		wsr("cntv_tval_el0", rsr("cntfrq_el0") / 100);	/* 10 ms */
 	else if (id == PTIMER_INTID)
@@ -193,7 +197,7 @@ static uint32_t fdt_vtimer_intid(uintptr_t dtb)
 	const uint32_t *c = fdt_prop(dtb, off, "interrupts", &len);
 	if (!c || len < 24)
 		return VTIMER_INTID;
-	uint32_t num = __builtin_bswap32(c[6]);	/* 3rd triple: virtual timer */
+	uint32_t num = __builtin_bswap32(c[7]);	/* 3rd triple <type num flags> */
 	return 16 + num;
 }
 
@@ -346,6 +350,7 @@ static void test_gic(uintptr_t dtb)
 		for (int i = 0; i < 100000 && (rd32(r + GICR_WAKER) & 4); i++)
 			;
 	}
+	gicr_self = r;
 	con_hex2("GICR", "base=", r, "waker=", rd32(r + GICR_WAKER));
 
 	stage = "gic config";
