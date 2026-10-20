@@ -237,13 +237,13 @@ sweet_panic_mailbox_store(const char *fmt, va_list *args)
 
     # Mirror everything the bootstrap console prints into the trace buffer, so a
     # host can still see the last line after the framebuffer alias goes away.
-    putc_old = "sweet_early_putc(char c)\n{\n\tif (early_disabled) {\n"
+    putc_old = "void\nsweet_early_putc(char c)\n{\n\tif (early_disabled) {\n"
     assert putc_old in early, "sweet_early_putc shape changed"
     early = early.replace(
         putc_old,
         "extern volatile char sweet_trace_buf[2048];\n"
         "extern volatile unsigned int sweet_trace_len;\n\n"
-        "sweet_early_putc(char c)\n{\n"
+        "void\nsweet_early_putc(char c)\n{\n"
         "\tif (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {\n"
         "\t\tsweet_trace_buf[sweet_trace_len++] = c;\n"
         "\t\tsweet_trace_buf[sweet_trace_len] = 0;\n"

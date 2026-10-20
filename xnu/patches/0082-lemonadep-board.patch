@@ -1188,7 +1188,7 @@ index 023086f..41d8039 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..94b0dd5 100644
+index 6928957..bd0d5d3 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,15 +7,15 @@
@@ -1210,13 +1210,14 @@ index 6928957..94b0dd5 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
-@@ -40,8 +40,15 @@ sweet_early_clear_row(void)
+@@ -39,9 +39,16 @@ sweet_early_clear_row(void)
+ 	}
  }
  
- void
 +extern volatile char sweet_trace_buf[2048];
 +extern volatile unsigned int sweet_trace_len;
 +
+ void
  sweet_early_putc(char c)
  {
 +	if (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {
