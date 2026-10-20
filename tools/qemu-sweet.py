@@ -214,8 +214,9 @@ def main():
         os.unlink(f'{out}/fb.raw')
     else:
         print(f'qemu exited early: {p.returncode}', file=sys.stderr)
-    for f in ('ram.bin',):
-        os.unlink(f'{out}/{f}')
+    if not os.environ.get('QW_KEEP'):
+        for f in ('ram.bin',):
+            os.unlink(f'{out}/{f}')
     open(f'{out}/result.json', 'w').write(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result), file=sys.stderr)
     print(f'{out}/fb.png  {out}/regs.txt  {out}/qemu.log', file=sys.stderr)
