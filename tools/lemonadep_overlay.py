@@ -34,6 +34,61 @@ FB_EDITS = {
     "osfmk/arm64/sweet_early.c": [
         ("(uintptr_t)0x9c000000", "(uintptr_t)BOARD_FB_BASE"),
         ("#define EARLY_STRIDE (4320u / 4)", "#define EARLY_STRIDE (BOARD_FB_STRIDE / 4)"),
+        # The high-VA console alias never reaches the scanout on this board:
+        # writes through it are lost (read back from cache only). Draw through
+        # the physical aperture once it exists and flush the lines.
+        ("static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)BOARD_FB_BASE;",
+         "static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)BOARD_FB_BASE;\n"
+         "extern uint64_t phystokv(uint64_t pa);\n"
+         "static unsigned int early_phys_live;\n"
+         "static void\n"
+         "early_flush(const volatile void *p, unsigned long bytes)\n"
+         "{\n"
+         "\tuintptr_t a = (uintptr_t)p & ~63UL;\n"
+         "\tuintptr_t e = ((uintptr_t)p + bytes + 63UL) & ~63UL;\n"
+         "\tfor (; a < e; a += 64) {\n"
+         "\t\t__asm__ volatile(\"dc civac, %0\" : : \"r\"(a) : \"memory\");\n"
+         "\t}\n"
+         "\t__asm__ volatile(\"dsb sy\" ::: \"memory\");\n"
+         "}"),
+        ("#define EARLY_FB early_fb",
+         "static volatile uint32_t *early_fb_now(void);\n"
+         "#define EARLY_FB early_fb_now()"),
+        ("#define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)",
+         "#define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)\n"
+         "static volatile uint32_t *\n"
+         "early_fb_now(void)\n"
+         "{\n"
+         "#if defined(LEMONADEP)\n"
+         "\tif (early_phys_live) {\n"
+         "\t\treturn (volatile uint32_t *)(uintptr_t)phystokv((uint64_t)BOARD_FB_BASE);\n"
+         "\t}\n"
+         "#endif\n"
+         "\treturn early_fb;\n"
+         "}"),
+        ("\t\t\t\tfor (unsigned int sx = 0; sx < EARLY_SCALE; sx++) {\n"
+         "\t\t\t\t\tline[gx * EARLY_SCALE + sx] = pixel;\n"
+         "\t\t\t\t}\n"
+         "\t\t\t}\n"
+         "\t\t}",
+         "\t\t\t\tfor (unsigned int sx = 0; sx < EARLY_SCALE; sx++) {\n"
+         "\t\t\t\t\tline[gx * EARLY_SCALE + sx] = pixel;\n"
+         "\t\t\t\t}\n"
+         "\t\t\t}\n"
+         "\t\t\tearly_flush((const void *)line, EARLY_CELL_W * 4u);\n"
+         "\t\t}"),
+        ("\t\tfor (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {\n"
+         "\t\t\tEARLY_FB[y * EARLY_STRIDE + x] = color;\n"
+         "\t\t}",
+         "\t\tfor (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {\n"
+         "\t\t\tEARLY_FB[y * EARLY_STRIDE + x] = color;\n"
+         "\t\t}\n"
+         "\t\tearly_flush((const void *)(EARLY_FB + y * EARLY_STRIDE + stage * 48), 48 * 4u);"),
+        ("\tearly_fb = (volatile uint32_t *)(uintptr_t)base;\n",
+         "\tearly_fb = (volatile uint32_t *)(uintptr_t)base;\n"
+         "#if defined(LEMONADEP)\n"
+         "\tearly_phys_live = 1;\n"
+         "#endif\n"),
     ],
     "osfmk/arm64/arm_vm_init.c": [
         ("*slot = 0x9c000000ULL", "*slot = (uint64_t)BOARD_FB_BASE"),

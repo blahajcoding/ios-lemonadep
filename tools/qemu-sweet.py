@@ -211,7 +211,8 @@ def main():
             screen, unknown = decode_screen(raw, font)
             open(f'{out}/fb.txt', 'w').write(screen)
             result = screen_result(screen, unknown)
-        os.unlink(f'{out}/fb.raw')
+        if not os.environ.get('QW_KEEPRAW'):
+            os.unlink(f'{out}/fb.raw')
     else:
         print(f'qemu exited early: {p.returncode}', file=sys.stderr)
     if not os.environ.get('QW_KEEP'):
