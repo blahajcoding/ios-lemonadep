@@ -214,6 +214,18 @@ sweet_panic_mailbox_store(const char *fmt, va_list *args)
     body = "\tearly_panicking = 1;\n"
     assert body in early
     early = early.replace(body, body + "\tsweet_panic_mailbox_store(fmt, args);\n", 1)
+    guard_old = "\tif (early_disabled || early_panicking) {\n"
+    assert guard_old in early, "panic guard not found"
+    early = early.replace(
+        guard_old,
+        "\tif (early_panicking) {\n",
+        1,
+    )
+    early = early.replace(
+        "\tearly_panicking = 1;\n",
+        "\tearly_panicking = 1;\n\t/* A panic must be visible even after the framebuffer console took over. */\n\tearly_disabled = 0;\n",
+        1,
+    )
     probe_old = "\tearly_fb = (volatile uint32_t *)(uintptr_t)base;\n"
     assert probe_old in early
     probe_new = (
