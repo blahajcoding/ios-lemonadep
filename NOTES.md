@@ -872,3 +872,42 @@ Unfinished / next actions:
 Sol (gpt-6.1-sol) is out of ChatGPT quota; rounds fail with "ChatGPT usage limit
 reached". The last answers used were round 5 (arena/args) and round 6 (MMU-on
 identity entry, `0xE49E3400` = buffer end).
+
+## Lemonadep handoff (2026-10-21, XNU reaches kprintf; console blind after relocate)
+
+Observed on hardware (photo of `shim-boot-t1.img`, current kernel):
+- The LEMONADEP kernel prints `SWEET EARLY 1..8` + `ALIAS ok` on the phone screen
+  and then nothing. Identical visible output in QEMU, where the kernel provably
+  continues to `SWEET EARLY 20: kprintf startup complete` (trace buffer read with
+  `--hmp "xp /2048bx <pa of _sweet_trace_buf>"`, `pa = va - 0xfffffe0006000000 + phys_base`).
+- Therefore the phone is not stuck at stage 8; it is blind. Everything drawn after
+  `sweet_early_relocate` uses the high-VA console alias and never reaches the panel.
+
+Root cause found in QEMU (payload for QEMU MUST use the QEMU ADT:
+`tools/mkadt.py /tmp/opencode/q.adt --qemu`; a phone ADT makes GICR read as
+0xffffffffffffffff and fakes a "cannot find GICR base" panic):
+- `sweet_early_map_final()` writes the L2 slot correctly. Dumped at runtime:
+  L1 entry 0x20000000b24e0003 -> L2 table 0xb24e0000, slot 1 = 0x00600000e4d00605,
+  i.e. PA 0xE4D00000 with AttrIndx 1 (write-combining). The mapping is right.
+- But the slot is rewritten without invalidating the VA, so post-switch writes keep
+  translating through the bootstrap TLB entry and vanish. Fix committed: `tlbi vaae1`
+  + `dsb ish; isb` after the slot write (0082 regenerated, 1776 lines).
+- Second finding: the shim leaves CNTV armed (from the GIC test) and PPI 27 pending,
+  a level interrupt that storms as soon as DAIF opens. Both the shim handoff
+  (`shim/loader.c`, `msr cntv_ctl_el0, xzr; msr daifset, #0xf`) and the kernel reset
+  vector (LEMONADEP-only `msr CNTV_CTL_EL0, xzr`) now quiesce it.
+- QEMU post-boot state: PC spins at `machine_idle` with a repeated IRQ taken at
+  `ExceptionVectorsBase` (0xfffffe0007488080) returning to `machine_idle`; QEMU has no
+  armed timer so this is a separate pending source, still unidentified.
+
+CI: run 39514862935 (both fixes). Download with
+`gh run download 39514862935 -n xnu-kernel -D xnu/out-0082`,
+then `python3 tools/mkpayload.py xnu/out-0082/kernel.development.lemonadep
+/tmp/opencode/lem.adt shim/out/payload-lem.bin --ramdisk /tmp/opencode/sweet-init
+--cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress -enable_kprintf_spam rd=md0 sweetlog=0 ufsrw=0"`,
+`DTB=/home/venus/dtb shim/build.sh ../shim/out/payload-lem.bin`,
+`./tools/lem-boot.sh shim/out/shim-boot.img --wait-adb`.
+
+Next action: flash that build. Expect marks 9-20 on screen (font) if the TLB fix is
+right; then the console output from `serial_init` onwards is the next milestone
+(`BLD root`, `load_init_program`), followed by the PID-1 heartbeat.
