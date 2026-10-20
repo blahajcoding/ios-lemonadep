@@ -168,7 +168,6 @@ def main():
     lem = lem.replace(timer_old, timer_new)
     lem = lem.replace("#define SWEET                     1", "#define LEMONADEP                 1")
     lem = lem.replace("#define BOARD_FB_BASE             0x9c000000", "#define BOARD_FB_BASE             0xE4000000")
-    lem = lem.replace("#define BOARD_FB_END              10229760", "#define BOARD_FB_END              10368000")
     lem = lem.replace('#define BOARD_NAME                "sweet"', '#define BOARD_NAME                "lemonadep"')
     lem = lem.replace("#define BOARD_VTIMER_INTID        19", "#define BOARD_VTIMER_INTID        27")
     open(os.path.join(ROOT, "pexpert/pexpert/arm64/LEMONADEP.h"), "w").write(lem)

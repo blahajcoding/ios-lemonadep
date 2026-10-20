@@ -1467,7 +1467,7 @@ index 9004f2b..a09bfc8 100644
  
 diff --git a/pexpert/pexpert/arm64/LEMONADEP.h b/pexpert/pexpert/arm64/LEMONADEP.h
 new file mode 100644
-index 0000000..f6909ae
+index 0000000..0cc3d44
 --- /dev/null
 +++ b/pexpert/pexpert/arm64/LEMONADEP.h
 @@ -0,0 +1,87 @@
@@ -1490,7 +1490,7 @@ index 0000000..f6909ae
 +
 +/* Board numbers the shared code reads by name. */
 +#define BOARD_FB_BASE             0xE4000000
-+#define BOARD_FB_END              10368000
++#define BOARD_FB_END              10229760
 +#define BOARD_FB_STRIDE           4320
 +#define BOARD_NAME                "lemonadep"
 +
