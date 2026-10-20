@@ -1188,7 +1188,7 @@ index 023086f..41d8039 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..0e9a20c 100644
+index 6928957..cc70751 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,15 +7,15 @@
@@ -1210,10 +1210,33 @@ index 6928957..0e9a20c 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
-@@ -109,13 +109,39 @@ sweet_early_mark(unsigned int stage, const char *label)
+@@ -109,13 +109,62 @@ sweet_early_mark(unsigned int stage, const char *label)
  	sweet_early_putc('\n');
  }
  
++/* A trace channel that outlives kprintf: the kernel text console is not
++ * wired up this early, so writes land in a buffer a host can dump by PA. */
++volatile char sweet_trace_buf[2048];
++volatile unsigned int sweet_trace_len;
++
++static void
++sweet_trace_putc(int c)
++{
++	if (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {
++		sweet_trace_buf[sweet_trace_len++] = (char)c;
++	}
++	sweet_trace_buf[sweet_trace_len] = 0;
++}
++
++void
++sweet_trace(const char *fmt, ...)
++{
++	va_list ap;
++	va_start(ap, fmt);
++	_doprnt(fmt, &ap, sweet_trace_putc, 16);
++	va_end(ap);
++}
++
 +volatile char sweet_panic_mailbox[1024];
 +static unsigned int sweet_panic_mailbox_len;
 +
@@ -1251,7 +1274,7 @@ index 6928957..0e9a20c 100644
  	sweet_early_string("\nSWEET EARLY PANIC: ");
  	va_list copy;
  	va_copy(copy, *args);
-@@ -129,6 +155,12 @@ void
+@@ -129,6 +178,12 @@ void
  sweet_early_relocate(uint64_t base)
  {
  	sweet_early_mark(8, "leaving bootstrap TTBR0");
@@ -1446,10 +1469,19 @@ index 54edb01..0432f5e 100644
  #else
  		crypto_random_uniform(zpercpu_get(sizeclass.ks_rng_ctx), num_slots,
 diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
-index 6089db9..22c511a 100644
+index 6089db9..06b95df 100644
 --- a/pexpert/arm/pe_fiq.c
 +++ b/pexpert/arm/pe_fiq.c
-@@ -17,9 +17,9 @@
+@@ -11,15 +11,18 @@
+ #include <machine/machine_routines.h>
+ #include <pexpert/device_tree.h>
+ #include <pexpert/arm64/board_config.h>
++#if defined(LEMONADEP)
++extern void sweet_trace(const char *fmt, ...);
++#endif
+ 
+ 
+ #if HAS_GIC_V3
  #define GICR_WAKE_TIMEOUT_NS (1000000000ULL) // timeout for redistributor wakeup (default 1s)
  MACHINE_TIMEOUT(gicr_wake_timeout_ns, "gicr-wake-timeout", GICR_WAKE_TIMEOUT_NS, MACHINE_TIMEOUT_UNIT_NSEC, NULL);
  
@@ -1461,17 +1493,17 @@ index 6089db9..22c511a 100644
  #endif
  
  static vm_offset_t gicd_base;
-@@ -60,6 +60,9 @@ find_gicr_pe_base()
+@@ -60,6 +63,9 @@ find_gicr_pe_base()
  		vm_offset_t gicr_pe_base = gicr_base + offset;
  		uint64_t gicr_typer = gicr_read64(GICR_TYPER);
  		uint32_t aff_value = (uint32_t) (gicr_typer >> GICR_TYPER_AFFINITY_VALUE_SHIFT) & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);
 +#if defined(LEMONADEP)
-+		kprintf("LEMON GICR: off %x typer %llx aff %x want %x\n", (unsigned)offset, gicr_typer, aff_value, phys_id);
++		sweet_trace("GICR off %x typer %llx aff %x want %x|", (unsigned)offset, gicr_typer, aff_value, phys_id);
 +#endif
  
  		if (phys_id == aff_value) {
  			return gicr_pe_base;
-@@ -102,7 +105,7 @@ pe_init_fiq()
+@@ -102,7 +108,7 @@ pe_init_fiq()
  			panic("%s: incorrect reg property size in GIC DT node; expecting 32 bytes but got %u bytes", __func__, prop_size);
  		}
  
@@ -1480,17 +1512,17 @@ index 6089db9..22c511a 100644
  		/* Read only on the boot CPU, before the GIC and RO-late lockdown. */
  		void const *timer_prop;
  		unsigned int timer_size;
-@@ -141,6 +144,9 @@ pe_init_fiq()
+@@ -141,6 +147,9 @@ pe_init_fiq()
  		}
  
  		gicr_size = gicr_size_prop;
 +#if defined(LEMONADEP)
-+		kprintf("LEMON GIC: soc %llx gicd %llx+%llx gicr %llx+%llx\n", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);
++		sweet_trace("GIC soc %llx gicd %llx+%llx gicr %llx+%llx|", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);
 +#endif
  	}
  
  	// Find the redistributor for this processor
-@@ -164,7 +170,7 @@ pe_init_fiq()
+@@ -164,7 +173,7 @@ pe_init_fiq()
  		}
  	}
  
@@ -1499,7 +1531,7 @@ index 6089db9..22c511a 100644
  	/*
  	 * Real hardware with two security states: Group 0 is TrustZone's and
  	 * non-secure writes to it are ignored. Everything we own is Group 1 NS
-@@ -175,7 +181,7 @@ pe_init_fiq()
+@@ -175,7 +184,7 @@ pe_init_fiq()
  	for (unsigned int i = 0; i < 32; i += 4) {
  		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
  	}
@@ -1508,7 +1540,7 @@ index 6089db9..22c511a 100644
  #else
  	// Configure timers and legacy FIQ to be group 0
  	gicr_write32(GICR_IGROUPR0, 0x81FFFFFF);
-@@ -190,7 +196,7 @@ pe_init_fiq()
+@@ -190,7 +199,7 @@ pe_init_fiq()
  	__builtin_arm_wsr64("ICC_SRE_EL1", icc_sre);
  	__builtin_arm_isb(ISB_SY);
  
@@ -1517,7 +1549,7 @@ index 6089db9..22c511a 100644
  	__builtin_arm_wsr64("ICC_BPR1_EL1", 0);
  #else
  	// Set priority masks and binary point for group 0
-@@ -203,7 +209,7 @@ pe_init_fiq()
+@@ -203,7 +212,7 @@ pe_init_fiq()
  	icc_ctlr &= ~ICC_CTLR_EOIMODE;
  	__builtin_arm_wsr64("ICC_CTLR_EL1", icc_ctlr);
  

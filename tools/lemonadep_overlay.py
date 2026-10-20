@@ -184,7 +184,30 @@ def main():
     # kernel framebuffer alias before trusting it.
     early_path = os.path.join(ROOT, "osfmk/arm64/sweet_early.c")
     early = open(early_path).read()
-    mailbox = """volatile char sweet_panic_mailbox[1024];
+    mailbox = """/* A trace channel that outlives kprintf: the kernel text console is not
+ * wired up this early, so writes land in a buffer a host can dump by PA. */
+volatile char sweet_trace_buf[2048];
+volatile unsigned int sweet_trace_len;
+
+static void
+sweet_trace_putc(int c)
+{
+	if (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {
+		sweet_trace_buf[sweet_trace_len++] = (char)c;
+	}
+	sweet_trace_buf[sweet_trace_len] = 0;
+}
+
+void
+sweet_trace(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	_doprnt(fmt, &ap, sweet_trace_putc, 16);
+	va_end(ap);
+}
+
+volatile char sweet_panic_mailbox[1024];
 static unsigned int sweet_panic_mailbox_len;
 
 static void
@@ -242,17 +265,23 @@ sweet_panic_mailbox_store(const char *fmt, va_list *args)
     # GICR discovery is the current boot blocker; trace what the kernel reads.
     fiq_path = os.path.join(ROOT, "pexpert/arm/pe_fiq.c")
     fiq = open(fiq_path).read()
+    decl = "#include <pexpert/arm64/board_config.h>\n"
+    assert decl in fiq, "board_config include not found in pe_fiq.c"
+    fiq = fiq.replace(
+        decl,
+        decl + "#if defined(LEMONADEP)\nextern void sweet_trace(const char *fmt, ...);\n#endif\n",
+        1)
     aff_line = "\t\tuint32_t aff_value = (uint32_t) (gicr_typer >> GICR_TYPER_AFFINITY_VALUE_SHIFT) & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);\n"
     assert aff_line in fiq, "aff_value line not found"
     fiq = fiq.replace(aff_line, aff_line +
         "#if defined(LEMONADEP)\n"
-        "\t\tkprintf(\"LEMON GICR: off %x typer %llx aff %x want %x\\n\", (unsigned)offset, gicr_typer, aff_value, phys_id);\n"
+        "\t\tsweet_trace(\"GICR off %x typer %llx aff %x want %x|\", (unsigned)offset, gicr_typer, aff_value, phys_id);\n"
         "#endif\n", 1)
     size_line = "\t\tgicr_size = gicr_size_prop;\n"
     assert size_line in fiq, "gicr_size assignment not found"
     fiq = fiq.replace(size_line, size_line +
         "#if defined(LEMONADEP)\n"
-        "\t\tkprintf(\"LEMON GIC: soc %llx gicd %llx+%llx gicr %llx+%llx\\n\", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);\n"
+        "\t\tsweet_trace(\"GIC soc %llx gicd %llx+%llx gicr %llx+%llx|\", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);\n"
         "#endif\n", 1)
     open(fiq_path, "w").write(fiq)
 
