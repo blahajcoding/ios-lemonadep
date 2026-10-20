@@ -178,6 +178,55 @@ def main():
         "# lemonadep (OnePlus 9 Pro, SM8350): sweet's config. MASTER.arm64.MacOSX plus the open-source")
     open(os.path.join(ROOT, "config/MASTER.arm64.lemonadep"), "w").write(master)
 
+    # Panic text and the post-TTBR0 console alias are invisible once the
+    # bootstrap tables are gone; keep a copy of every early panic in a fixed
+    # buffer a host (QEMU) can read back by physical address, and probe the
+    # kernel framebuffer alias before trusting it.
+    early_path = os.path.join(ROOT, "osfmk/arm64/sweet_early.c")
+    early = open(early_path).read()
+    mailbox = """volatile char sweet_panic_mailbox[1024];
+static unsigned int sweet_panic_mailbox_len;
+
+static void
+sweet_panic_mailbox_putc(char c, void *arg)
+{
+	(void)arg;
+	if (sweet_panic_mailbox_len < sizeof(sweet_panic_mailbox) - 1) {
+		sweet_panic_mailbox[sweet_panic_mailbox_len++] = c;
+	}
+}
+
+static void
+sweet_panic_mailbox_store(const char *fmt, va_list *args)
+{
+	va_list copy;
+
+	va_copy(copy, *args);
+	_doprnt(fmt, &copy, sweet_panic_mailbox_putc, 0);
+	va_end(copy);
+	sweet_panic_mailbox[sweet_panic_mailbox_len] = 0;
+}
+
+"""
+    decl = "void\nsweet_early_panic(const char *fmt, va_list *args)\n"
+    assert decl in early, "sweet_early_panic not found"
+    early = early.replace(decl, mailbox + decl, 1)
+    body = "\tearly_panicking = 1;\n"
+    assert body in early
+    early = early.replace(body, body + "\tsweet_panic_mailbox_store(fmt, args);\n", 1)
+    probe_old = "\tearly_fb = (volatile uint32_t *)(uintptr_t)base;\n"
+    assert probe_old in early
+    probe_new = (
+        "\t{\n"
+        "\t\tvolatile uint32_t *alias = (volatile uint32_t *)(uintptr_t)base;\n"
+        "\t\t*alias = 0xa5a5c0deu;\n"
+        "\t\t__asm__ volatile(\"dsb sy\" ::: \"memory\");\n"
+        "\t\tsweet_early_string(*alias == 0xa5a5c0deu ? \"ALIAS ok\\n\" : \"ALIAS bad\\n\");\n"
+        "\t}\n"
+    )
+    early = early.replace(probe_old, probe_new + probe_old, 1)
+    open(early_path, "w").write(early)
+
 
 if __name__ == "__main__":
     main()

@@ -1188,7 +1188,7 @@ index 023086f..41d8039 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..e001447 100644
+index 6928957..015bbf9 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,15 +7,15 @@
@@ -1210,6 +1210,57 @@ index 6928957..e001447 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
+@@ -109,6 +109,29 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 	sweet_early_putc('\n');
+ }
+ 
++volatile char sweet_panic_mailbox[1024];
++static unsigned int sweet_panic_mailbox_len;
++
++static void
++sweet_panic_mailbox_putc(char c, void *arg)
++{
++	(void)arg;
++	if (sweet_panic_mailbox_len < sizeof(sweet_panic_mailbox) - 1) {
++		sweet_panic_mailbox[sweet_panic_mailbox_len++] = c;
++	}
++}
++
++static void
++sweet_panic_mailbox_store(const char *fmt, va_list *args)
++{
++	va_list copy;
++
++	va_copy(copy, *args);
++	_doprnt(fmt, &copy, sweet_panic_mailbox_putc, 0);
++	va_end(copy);
++	sweet_panic_mailbox[sweet_panic_mailbox_len] = 0;
++}
++
+ void
+ sweet_early_panic(const char *fmt, va_list *args)
+ {
+@@ -116,6 +139,7 @@ sweet_early_panic(const char *fmt, va_list *args)
+ 		return;
+ 	}
+ 	early_panicking = 1;
++	sweet_panic_mailbox_store(fmt, args);
+ 	sweet_early_string("\nSWEET EARLY PANIC: ");
+ 	va_list copy;
+ 	va_copy(copy, *args);
+@@ -129,6 +153,12 @@ void
+ sweet_early_relocate(uint64_t base)
+ {
+ 	sweet_early_mark(8, "leaving bootstrap TTBR0");
++	{
++		volatile uint32_t *alias = (volatile uint32_t *)(uintptr_t)base;
++		*alias = 0xa5a5c0deu;
++		__asm__ volatile("dsb sy" ::: "memory");
++		sweet_early_string(*alias == 0xa5a5c0deu ? "ALIAS ok\n" : "ALIAS bad\n");
++	}
+ 	early_fb = (volatile uint32_t *)(uintptr_t)base;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	sweet_early_mark(9, "kernel framebuffer VA live");
 diff --git a/osfmk/arm64/sweet_early.h b/osfmk/arm64/sweet_early.h
 index d7a25f2..05d1191 100644
 --- a/osfmk/arm64/sweet_early.h
