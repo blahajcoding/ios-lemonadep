@@ -1446,7 +1446,7 @@ index 54edb01..0432f5e 100644
  #else
  		crypto_random_uniform(zpercpu_get(sizeclass.ks_rng_ctx), num_slots,
 diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
-index 6089db9..eb80b87 100644
+index 6089db9..22c511a 100644
 --- a/pexpert/arm/pe_fiq.c
 +++ b/pexpert/arm/pe_fiq.c
 @@ -17,9 +17,9 @@
@@ -1461,7 +1461,17 @@ index 6089db9..eb80b87 100644
  #endif
  
  static vm_offset_t gicd_base;
-@@ -102,7 +102,7 @@ pe_init_fiq()
+@@ -60,6 +60,9 @@ find_gicr_pe_base()
+ 		vm_offset_t gicr_pe_base = gicr_base + offset;
+ 		uint64_t gicr_typer = gicr_read64(GICR_TYPER);
+ 		uint32_t aff_value = (uint32_t) (gicr_typer >> GICR_TYPER_AFFINITY_VALUE_SHIFT) & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);
++#if defined(LEMONADEP)
++		kprintf("LEMON GICR: off %x typer %llx aff %x want %x\n", (unsigned)offset, gicr_typer, aff_value, phys_id);
++#endif
+ 
+ 		if (phys_id == aff_value) {
+ 			return gicr_pe_base;
+@@ -102,7 +105,7 @@ pe_init_fiq()
  			panic("%s: incorrect reg property size in GIC DT node; expecting 32 bytes but got %u bytes", __func__, prop_size);
  		}
  
@@ -1470,7 +1480,17 @@ index 6089db9..eb80b87 100644
  		/* Read only on the boot CPU, before the GIC and RO-late lockdown. */
  		void const *timer_prop;
  		unsigned int timer_size;
-@@ -164,7 +164,7 @@ pe_init_fiq()
+@@ -141,6 +144,9 @@ pe_init_fiq()
+ 		}
+ 
+ 		gicr_size = gicr_size_prop;
++#if defined(LEMONADEP)
++		kprintf("LEMON GIC: soc %llx gicd %llx+%llx gicr %llx+%llx\n", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);
++#endif
+ 	}
+ 
+ 	// Find the redistributor for this processor
+@@ -164,7 +170,7 @@ pe_init_fiq()
  		}
  	}
  
@@ -1479,7 +1499,7 @@ index 6089db9..eb80b87 100644
  	/*
  	 * Real hardware with two security states: Group 0 is TrustZone's and
  	 * non-secure writes to it are ignored. Everything we own is Group 1 NS
-@@ -175,7 +175,7 @@ pe_init_fiq()
+@@ -175,7 +181,7 @@ pe_init_fiq()
  	for (unsigned int i = 0; i < 32; i += 4) {
  		gicr_write32(GICR_IPRIORITYR0 + i, 0xA0A0A0A0);
  	}
@@ -1488,7 +1508,7 @@ index 6089db9..eb80b87 100644
  #else
  	// Configure timers and legacy FIQ to be group 0
  	gicr_write32(GICR_IGROUPR0, 0x81FFFFFF);
-@@ -190,7 +190,7 @@ pe_init_fiq()
+@@ -190,7 +196,7 @@ pe_init_fiq()
  	__builtin_arm_wsr64("ICC_SRE_EL1", icc_sre);
  	__builtin_arm_isb(ISB_SY);
  
@@ -1497,7 +1517,7 @@ index 6089db9..eb80b87 100644
  	__builtin_arm_wsr64("ICC_BPR1_EL1", 0);
  #else
  	// Set priority masks and binary point for group 0
-@@ -203,7 +203,7 @@ pe_init_fiq()
+@@ -203,7 +209,7 @@ pe_init_fiq()
  	icc_ctlr &= ~ICC_CTLR_EOIMODE;
  	__builtin_arm_wsr64("ICC_CTLR_EL1", icc_ctlr);
  

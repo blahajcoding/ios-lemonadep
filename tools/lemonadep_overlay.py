@@ -239,6 +239,23 @@ sweet_panic_mailbox_store(const char *fmt, va_list *args)
     early = early.replace(probe_old, probe_new + probe_old, 1)
     open(early_path, "w").write(early)
 
+    # GICR discovery is the current boot blocker; trace what the kernel reads.
+    fiq_path = os.path.join(ROOT, "pexpert/arm/pe_fiq.c")
+    fiq = open(fiq_path).read()
+    aff_line = "\t\tuint32_t aff_value = (uint32_t) (gicr_typer >> GICR_TYPER_AFFINITY_VALUE_SHIFT) & (MPIDR_AFF1_MASK | MPIDR_AFF0_MASK);\n"
+    assert aff_line in fiq, "aff_value line not found"
+    fiq = fiq.replace(aff_line, aff_line +
+        "#if defined(LEMONADEP)\n"
+        "\t\tkprintf(\"LEMON GICR: off %x typer %llx aff %x want %x\\n\", (unsigned)offset, gicr_typer, aff_value, phys_id);\n"
+        "#endif\n", 1)
+    size_line = "\t\tgicr_size = gicr_size_prop;\n"
+    assert size_line in fiq, "gicr_size assignment not found"
+    fiq = fiq.replace(size_line, size_line +
+        "#if defined(LEMONADEP)\n"
+        "\t\tkprintf(\"LEMON GIC: soc %llx gicd %llx+%llx gicr %llx+%llx\\n\", soc_base_phys, gicd_base_prop, gicd_size_prop, gicr_base_prop, gicr_size_prop);\n"
+        "#endif\n", 1)
+    open(fiq_path, "w").write(fiq)
+
 
 if __name__ == "__main__":
     main()
