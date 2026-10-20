@@ -1,5 +1,41 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Lemonadep entry decision review (2026-10-20, follow-up)
+
+- Scope: engineering advice only; no kernel/shim edits, CI runs or device
+  commands. Existing dirty shim/loader.c, shim/mmu.c and shim/mmu.h preserved.
+  Boot observations below are user-reported, not independently reproduced.
+- User reports correct entry readback, no stage-0 bar after cold entry,
+  failed high-PA execution probe and no full-screen green after MMU disable,
+  but console text still visible. These do not establish failure to execute.
+- Concrete local probe bug: shim/loader.c:81-100 has `str x2, [x0]`, but
+  stub_t takes two arguments, so AAPCS64 passes the value in x1, not x2.
+  Fix to `str x1, [x0]`; use an independent RAM result before relying on FB.
+  Current checkout places the probe BEFORE mmu_disable(), unlike the reported
+  experiment; do not equate this dirty source with the tested artifact.
+- Address arithmetic: 0xe49e3400 is 0xe4000000 + 2400*4320 (buffer end).
+  Row 2368 starts at 0xe49c1800. Current 0082 defines BOARD_FB_END=10229760,
+  the correct row-2368 offset; reconcile actual artifact/disassembly.
+- Decision: qualify MMU-on high-PA execution first, following sweet's working
+  path. During initial table construction map ONLY arena [0x100000000,
+  0x140000000) with existing WB_FLAGS, 32 L2 blocks of 32 MiB. This clears
+  EL1 PXN, keeps UXN, and existing mmu_enable clears SCTLR.WXN. Keep FB NC.
+  If changing live valid descriptors use proper break-before-make/TLBI and
+  attribute-transition cache maintenance, not just descriptor overwrites.
+  Clean copied code/data to PoC and invalidate I-cache with barriers before
+  entry. Verify XNU's TTBR/SCTLR transition retains current PC/stack access;
+  stock cold-entry assumptions alone do not establish this patched path.
+- M=0 ignores stage-1 descriptor attributes/PXN; Device stores do not normally
+  disappear from DMA visibility. ABI, runtime, scanout/timing/cache and any
+  higher-EL restrictions remain separate hypotheses. New high-VA VBAR before
+  TTBR1 is valid can hide a later exception from shim vectors.
+- Next three temporary-boot experiments: (1) fixed ABI RAM+FB probe, readback
+  and center/bottom visible markers with MMU on and arena executable;
+  (2) same qualified mapping, enter XNU with a center-screen early marker;
+  (3) if still blocked, physical scratch milestone codes and physical-valid
+  exception recorder for ESR/ELR/FAR/SPSR through the translation transition.
+  No flash/storage writes authorized by this review.
+
 ## Lemonadep first-XNU-boot review (2026-10-20)
 
 - Scope: decision review; engineer implements. Reviewed checkout bd54cff.
