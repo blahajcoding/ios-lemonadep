@@ -1,5 +1,65 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Lemonadep MMU-on entry decision review (2026-10-20)
+
+- Scope: advice only; engineer executes. No kernel/shim edits, CI runs or
+  device commands. Dirty shim/loader.c, shim/mmu.c, shim/mmu.h and shim/shim.c
+  preserved. New phone evidence is user-reported, not reproduced here.
+- Reported: corrected `str x1, [x0]; ret` probe at entry succeeds with MMU
+  on; real entry gives neither visible stage-0 band nor shim exception page.
+  Row 2368 at 0xe49c1800 is independently reported visible. MMU-off accesses
+  above 4 GiB reportedly address-size fault; keep MMU-on for these experiments.
+- Two inconsistencies require live artifact/register reconciliation, not
+  assumptions: PA = VA - virtBase + physBase maps entry VA
+  0xfffffe000748b488 to 0x100487488 with reported virtBase
+  0xfffffe0007004000 and physBase 0x100000000, NOT 0x1014bb488.
+  Claimed entry PA 0x1014bb488 and branch target PA 0x1014bd0ec share L2
+  block [0x100000000,0x102000000); a uniform Device+PXN descriptor cannot
+  permit privileged execution at one and deny it only at the other.
+  Check live descriptors/TLB state, exact restored/copied instructions and
+  actual branch register immediately before entry. AT S1E1R tests data
+  translation, not instruction execute permission. Local probe placement
+  precedes payload segment copying, so it does not qualify final code bytes.
+- Next temporary boot: construct the entire owned 1-GiB arena with existing
+  WB_FLAGS (32 L2 blocks, Normal WB, inner-shareable, AF, PXN clear, UXN set),
+  keep WXN=0 and FB NC. Do this before first enabling these mappings; if
+  modifying active descriptors, use break-before-make/TLBI and correct cache
+  attribute-transition maintenance. Clean all copied kernel/ADT/boot_args/
+  ramdisk data to PoC, synchronize restored instructions and invalidate
+  I-cache with barriers. No blanket mapping of unrelated/protected DRAM.
+  PXN is a real entry bug, but normally causes an instruction abort, not an
+  architecturally silent hang; its exact role is not yet established.
+- Second boot if still blocked: temporarily replace start_first_cpu with a
+  no-stack returning probe, reached through the ORIGINAL entry branch. Paint
+  one marker before and another after `msr oslar_el1, xzr`; restore/clean/
+  invalidate before any real entry. OSLAR_EL1 is architectural Arm debug,
+  not Apple-specific. MDCR_EL2.TDOSA/TDE or MDCR_EL3.TDOSA can trap it to a
+  higher EL, invisible to VBAR_EL1. An EL1 UNDEFINED is a different case.
+- Third boot: replace early low-vector spins with a stack-independent
+  physical-valid ESR/ELR/FAR/SPSR recorder and stage markers through table
+  handoff. Keep recorder/FB accessible in both maps. Stock low vectors use
+  `b .`; after XNU changes VBAR, absence of shim panic is expected on faults.
+  MMU-on adaptation must handle TCR/TTBR/MAIR/SCTLR changes coherently, not
+  merely retain M=1 while following an MMU-off-oriented register sequence.
+- start.s ADRP+ADD uses the CURRENT PC: under identity entry it produces the
+  symbol's PA, not its linked VA. For reported bases, excepstack_top linked
+  VA 0xfffffe00080bc000 first gives PA 0x1010b8000, then PA+virtBase-physBase
+  returns that KVA. Setting SP does not dereference it; high stack need not
+  exist in shim identity map until used, but shim vectors immediately push
+  to SP and would fail after that switch. XNU's low VBAR is similarly a PA
+  from ADRP, and need not replace working shim vectors before the marker.
+- boot_args: physBase = managed arena start 0x100000000; virtBase = KVA
+  corresponding to that PA in the actual segment layout; memSize=0x40000000.
+  Keep x0=boot_args PA, topOfKernelData physical, deviceTreeP its linear KVA.
+  Bootstrap L2 blocks require corresponding VA/PA offsets modulo 0x2000000.
+  Current tools/mkpayload.py:150-152 uses __TEXT.vmaddr rounded down to
+  32 MiB as virt_base; use that SAME base for segment placement and boot_args,
+  not a separately chosen __TEXT address or reversed/equal VA/PA fields.
+- References: apple-oss-distributions/xnu xnu-8796.141.3 osfmk/arm64/start.s;
+  https://df.lth.se/~getz/ARM/SysReg/AArch64-oslar_el1.html . No new build,
+  CI ID or device result. Open: reconcile live artifact/address arithmetic,
+  run the executable-arena boot, then branch/OSLAR and vector probes as needed.
+
 ## Lemonadep entry decision review (2026-10-20, follow-up)
 
 - Scope: engineering advice only; no kernel/shim edits, CI runs or device
