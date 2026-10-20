@@ -225,6 +225,9 @@ const char *loader_boot(uintptr_t dtb)
 			f[i] = 0x00102040U;
 		__asm__ volatile("dsb sy" ::: "memory");
 	}
+	/* The GIC tests leave CNTV armed and its PPI pending; that is a level
+	 * interrupt and storms as soon as the kernel unmaskes. */
+	__asm__ volatile("msr cntv_ctl_el0, xzr; msr daifset, #0xf" ::: "memory");
 	/* MMU stays on: with it off, ABL's TCR_EL1.IPS limits PAs to 32 bits and
 	 * every access above 4 GiB takes an address-size abort. */
 	((xnu_entry_t)entry_pa)(ba_pa);

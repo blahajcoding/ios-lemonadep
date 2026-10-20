@@ -42,6 +42,14 @@ FB_EDITS = {
         ("MOV64\tx0, (0x9c000000 + 2368 * 4320)", "MOV64\tx0, (BOARD_FB_BASE + BOARD_FB_END)"),
         ("mov\t\tx4, #4320", "mov\t\tx4, #BOARD_FB_STRIDE"),
         ("MOV64\tx10, 0x9c000000", "MOV64\tx10, BOARD_FB_BASE"),
+        # The shim may hand over with CNTV armed and its PPI pending; a level
+        # interrupt storms the moment DAIF opens, before the timer driver runs.
+        ("\tmsr\t\tDAIFSet, #(DAIFSC_ALL)",
+         "\tmsr\t\tDAIFSet, #(DAIFSC_ALL)\n"
+         "#if defined(LEMONADEP)\n"
+         "\tmsr\t\tCNTV_CTL_EL0, xzr\n"
+         "\tisb\n"
+         "#endif"),
     ],
     "iokit/Kernel/arm/SweetPlatformExpert.cpp": [
         ('strlcpy(name, "sweet", (size_t)maxLength);',
