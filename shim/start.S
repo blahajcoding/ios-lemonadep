@@ -39,6 +39,27 @@ _start:
 3:	wfe
 	b	3b
 
+/* Kernel faults after start.s installs its own VBAR: our trampolines land
+ * here with x0 = vector slot. Paint a solid row (registers and the
+ * framebuffer only, so it survives a broken console), then give ourselves
+ * a stack before calling C. */
+	.globl	xnu_vec_trap
+xnu_vec_trap:
+	mov	x10, #0xe490
+	lsl	x10, x10, #16		/* FB row 2304 */
+	mov	x11, #0xff00
+	lsl	x11, x11, #16		/* 0xff000000 */
+	lsl	x12, x0, #16		/* slot -> colour */
+	orr	x11, x11, x12
+	mov	x12, #540		/* 4320 bytes = 1080 px */
+1:	str	x11, [x10], #8
+	subs	x12, x12, #1
+	b.ne	1b
+	msr	spsel, #1
+	adr	x9, _stack_top
+	mov	sp, x9
+	b	xnu_vector_hit
+
 /* PSCI CPU_ON target. x0 = context id = cpu index (1..7). */
 	.globl secondary_entry
 secondary_entry:

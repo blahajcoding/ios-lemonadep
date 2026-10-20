@@ -813,3 +813,62 @@ UFSHCI-only driver carries without clock/PHY programming (Sol round-1 risk 1
 is resolved positively for reads). The XNU placement question is unchanged and
 now has a free-gap report: page 2 prints MEMSET (bank/static/dynamic counts)
 and FREE (base + MiB) for every window >= 256 MiB after all addressed carve-outs.
+
+## Lemonadep engineering handoff (2026-10-20 04:40, night wrap)
+
+Root cause of the silent kernel boot found on hardware, not in XNU:
+
+- **The live framebuffer is 0xE4D00000, not 0xE4000000.** The shim's `con.fb`
+  (from the runtime FDT `splash_region` -> `con_init`) reads back as
+  `0xE4D00000` on the panic page (`FBBASE`). Every shim paint at that address is
+  visible on the panel; every kernel write to the compiled constant
+  `BOARD_FB_BASE = 0xE4000000` lands in valid RAM but never on screen, with no
+  fault. That is why start.s's stage-0 marker and XNU's early console
+  (`sweet_early.c`, which uses `BOARD_FB_BASE`) have always been invisible.
+- Fix applied: `tools/lemonadep_overlay.py` now emits
+  `#define BOARD_FB_BASE 0xE4D00000` (comment updated, `BOARD_FB_END` stays
+  10229760 = 2368 rows * 4320) and `xnu/patches/0082-lemonadep-board.patch`
+  regenerated (1624 lines, 78 files). Needs a CI kernel rebuild to reach the phone.
+
+Hardware facts confirmed tonight (measured, not guessed):
+
+- The kernel really executes: BRK planted at `entry_pa + 0x1c64 + 0x40` (the outer
+  loop `add x0,x0,x4`) fires with `ESR 0xF2000001`, `ELR 0x10148D12C`, and
+  `X0 0xE4000000`, `X1 0x00FF0000` — i.e. the patched marker constants reached
+  the CPU. Frame stores from the kernel did not fault (address < 4 GiB).
+- `start.s` marker loop layout at phys `entry_pa + 0x1c64`: `+0x10/+0x14/+0x18/+0x1c`
+  are `movk x0,#0,lsl#48 / #0,lsl#32 / #0xe49c,lsl#16 / #0x1800`, `+0x20` `mov w1,#-1`,
+  `+0x24` `mov x2,#0x20` (rows), `+0x28` `mov x4,#0x10e0` (stride), `+0x2c` `mov x3,#0x40`
+  (words/row), `+0x30` `mov x5,x0`, `+0x34` `str w1,[x5],#4`, `+0x38` `subs x3`,
+  `+0x3c` `b.ne`, `+0x40` `add x0,x0,x4`, `+0x44` `subs x2`, `+0x48` `b.ne +0x2c`,
+  `+0x4c` `dsb sy`. Remember the movk `hw` field: lsl16 = 0x200000, lsl32 = 0x400000,
+  lsl48 = 0x600000.
+- `reset()` writes sweet's PSCI magic to `0x146AA65C`, which is not DRAM on
+  lemonadep: it takes a synchronous external abort (`ESR 0x96000010`). The device
+  never self-reboots from the panic page; power-cycle by hand.
+- With the MMU off, ABL's `TCR_EL1.IPS` limits PAs to 32 bits on this phone, so
+  `loader_boot`'s own access to 0x1014xxxxx aborts (`ESR 0x86000042`,
+  IFSC 2 = address-size fault). XNU must be entered with the MMU On and an
+  identity map; `mmu_disable()` is not called any more.
+- Kernel-side vectors: the shim patches the payload's 16 low-vector slots to a
+  trampoline. Before `start.s` executes `msr vbar_el1`, though, faults land in the
+  shim's own handler (`STAGE loader`), which is why the BRK page above shows X0/X1
+  and the FB readback.
+- Diagnostic additions kept in the shim: `exc_handler` samples `con.fb` (row 0 and
+  row 960) before repainting and prints `FBBASE`, `FB0`, `FB960`.
+
+Unfinished / next actions:
+
+1. Wait for the LEMONADEP CI build with `BOARD_FB_BASE = 0xE4D00000`, rebuild the
+   payload (`tools/mkpayload.py`), boot it. Expect the white stage-0 marker rows at
+   the bottom and then XNU's early console text.
+2. If text appears, move on to the RAM-disk smoke test (Sol round-5 acceptance:
+   PID 1 + 5 s heartbeats for 60 s).
+3. Still blocking later work: partition backups (none yet), fresh iOS 16 root
+   (`mkfs.hfsplus` missing, IPSW SSD not mounted), UFS capacity/GPT reconciliation.
+4. Debug scaffolding to remove before the first "real" image: the kernel-vector
+   trampoline patch in `shim/loader.c`, and the FB readback lines in `exc_handler`.
+
+Sol (gpt-6.1-sol) is out of ChatGPT quota; rounds fail with "ChatGPT usage limit
+reached". The last answers used were round 5 (arena/args) and round 6 (MMU-on
+identity entry, `0xE49E3400` = buffer end).

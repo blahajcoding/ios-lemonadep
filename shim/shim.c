@@ -155,11 +155,63 @@ static void irq_handler(void)
 	isb();
 }
 
+/*
+ * Last-resort report: no text, no font, no helper calls, only stores. Each
+ * band is 32 blocks of 30 px, MSB left; white = 1, blue = 0.
+ */
+static void bars(uint32_t band, uint64_t v)
+{
+	volatile uint32_t *f = con.fb;
+	uint32_t step = con.pitch / 4;
+	if (!f)
+		return;
+	for (int bit = 31; bit >= 0; bit--) {
+		uint32_t c = (v >> bit) & 1 ? 0xffffffffU : 0xff0000a0U;
+		for (uint32_t y = 0; y < 48; y++)
+			for (uint32_t x = 0; x < 30; x++)
+				f[(40 + band * 60 + y) * step + 20 + (uint32_t)(31 - bit) * 32 + x] = c;
+	}
+}
+
+/* The kernel points VBAR_EL1 at its own low vectors early in start.s and
+ * every slot there is "b .". We patch the copy in the arena so an early
+ * kernel fault reports itself instead of spinning forever. */
+void xnu_vector_hit(uint64_t slot)
+{
+	con_clear(BLUE);
+	/* Barcode first: pure framebuffer stores, survives a broken console. */
+	bars(0, slot);
+	bars(1, rsr("esr_el1"));
+	bars(2, rsr("elr_el1"));
+	bars(3, rsr("far_el1"));
+	bars(4, rsr("spsr_el1"));
+	con_hex2("PANIC", "xnuvec=", slot, "cpu=", rsr("mpidr_el1"));
+	con_hex("STAGE", 0x584e55U);
+	con_hex("ESR", rsr("esr_el1"));
+	con_hex("ELR", rsr("elr_el1"));
+	con_hex("FAR", rsr("far_el1"));
+	con_hex("SPSR", rsr("spsr_el1"));
+	con_hex("FB0", *(volatile uint32_t *)(uintptr_t)con.fb);
+	con_hex("FB960", *(volatile uint32_t *)((uintptr_t)con.fb + 960U * 4320U));
+	reset(120);
+}
+
 void exc_handler(uint64_t slot, uint64_t *regs)
 {
 	if (slot == 5) {	/* IRQ from current EL, SPx */
 		irq_handler();
 		return;
+	}
+	/* Sample the framebuffer before painting over it: the kernel may have
+	 * written it. */
+	static uint32_t fb0, fb960;
+	{
+		uintptr_t a = (uintptr_t)con.fb, b = a + 960U * 4320U;
+		__asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
+		__asm__ volatile("dc civac, %0" : : "r"(b) : "memory");
+		__asm__ volatile("dsb sy" ::: "memory");
+		fb0 = *(volatile uint32_t *)a;
+		fb960 = *(volatile uint32_t *)b;
 	}
 	if ((slot & 3) == 0 && fault_tolerant) {	/* data/inst abort while probing */
 		fault_esr = rsr("esr_el1");
@@ -169,6 +221,29 @@ void exc_handler(uint64_t slot, uint64_t *regs)
 		return;
 	}
 	con_clear(BLUE);
+	switch (slot & 3) {
+	case 0: con_str("PANIC", "SYNC"); break;
+	case 1: con_str("PANIC", "IRQ"); break;
+	case 2: con_str("PANIC", "FIQ"); break;
+	default: con_str("PANIC", "SERROR"); break;
+	}
+	con_hex2("SLOT", "n=", slot, "cpu=", rsr("mpidr_el1"));
+	con_str("STAGE", stage);
+	con_hex("ESR", rsr("esr_el1"));
+	con_hex("ELR", rsr("elr_el1"));
+	con_hex("FAR", rsr("far_el1"));
+	con_hex("SPSR", rsr("spsr_el1"));
+	con_hex("X0", regs[0]);
+	con_hex("X1", regs[1]);
+	con_hex("FBBASE", (uint64_t)(uintptr_t)con.fb);
+	con_hex("FB0", fb0);
+	con_hex("FB960", fb960);
+	// bars(rsr("esr_el1"));
+	// bars(rsr("elr_el1"));
+	// bars(rsr("far_el1"));
+	// bars(rsr("spsr_el1"));
+	// bars(slot);
+	reset(30);
 	switch (slot & 3) {
 	case 0: con_str("PANIC", "SYNC"); break;
 	case 1: con_str("PANIC", "IRQ"); break;

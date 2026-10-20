@@ -56,7 +56,7 @@ BOARD_HEADER = '''
  * TrustZone's, so every interrupt arrives as a Group 1 IRQ.
  *
  * Board numbers measured from the live FDT/ABL handoff, not from a dts:
- *   splash_region 0xE4000000, ABL draws 1080x2400 with a 4320-byte stride
+ *   splash_region 0xE4D00000 (live con.fb), ABL draws 1080x2400 with a 4320-byte stride
  *   virtual timer PPI 11 (DT <1 11 ...>) -> INTID 16 + 11 = 27
  */
 '''.lstrip("\n")
@@ -167,7 +167,7 @@ def main():
     assert timer_old in lem
     lem = lem.replace(timer_old, timer_new)
     lem = lem.replace("#define SWEET                     1", "#define LEMONADEP                 1")
-    lem = lem.replace("#define BOARD_FB_BASE             0x9c000000", "#define BOARD_FB_BASE             0xE4000000")
+    lem = lem.replace("#define BOARD_FB_BASE             0x9c000000", "#define BOARD_FB_BASE             0xE4D00000")
     lem = lem.replace('#define BOARD_NAME                "sweet"', '#define BOARD_NAME                "lemonadep"')
     lem = lem.replace("#define BOARD_VTIMER_INTID        19", "#define BOARD_VTIMER_INTID        27")
     open(os.path.join(ROOT, "pexpert/pexpert/arm64/LEMONADEP.h"), "w").write(lem)

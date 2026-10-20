@@ -125,6 +125,26 @@ int mmu_enable(struct mmu_info *info)
 	return 0;
 }
 
+/*
+ * Back to the state XNU's start.s expects: MMU off, caches off, no stale
+ * translations, and everything the shim wrote flushed to the point of
+ * coherency first.
+ */
+void mmu_disable(void)
+{
+	uintptr_t lo = (uintptr_t)_head & ~(PG_SIZE - 1);
+	uintptr_t hi = ((uintptr_t)_end + PG_SIZE - 1) & ~(PG_SIZE - 1);
+
+	__asm__ volatile("dsb sy" ::: "memory");
+	for (uintptr_t a = lo; a < hi; a += 64)
+		__asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	uint64_t sctlr = rsr("sctlr_el1");
+	wsr("sctlr_el1", sctlr & ~(SCTLR_M | SCTLR_A | SCTLR_C | SCTLR_I | (1UL << 12)));
+	__asm__ volatile("isb; tlbi vmalle1; dsb nsh; isb" ::: "memory");
+}
+
 /* Translate a VA with AT S1E1R; returns PAR_EL1. */
 uint64_t mmu_probe(uintptr_t va)
 {

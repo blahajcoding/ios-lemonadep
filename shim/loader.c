@@ -10,10 +10,13 @@
 #include <stdint.h>
 #include "console.h"
 #include "fdt.h"
+#include "mmu.h"
 #include "loader.h"
 
 #define BOOT_LINE_LENGTH	608
 #define PAGE_16K		0x4000UL
+
+extern void xnu_vec_trap(void);
 
 struct payload_seg {
 	uint64_t vmaddr, vmsize, file_off, file_size;
@@ -76,6 +79,32 @@ static int magic_ok(const char *m)
 
 typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
+/* Two PC-independent instructions so the copy runs from anywhere. */
+static __attribute__((naked, noinline)) void exec_stub(void)
+{
+	__asm__ volatile("str x1, [x0]\n\tret\n\t");
+}
+
+typedef void (*stub_t)(volatile uint64_t *dst, uint64_t val);
+
+/*
+ * Prove that a copied routine runs from ordinary RAM far above 4 GiB, and
+ * that the framebuffer is visible at row 1200 (not only at the top).
+ */
+static int exec_probe(void)
+{
+	uintptr_t dst_pa = 0x13FF00000UL;
+	volatile uint64_t *fb =
+	    (volatile uint64_t *)((uintptr_t)0xE4000000UL + 1200UL * 4320UL);
+
+	*(volatile uint64_t *)dst_pa = ((const uint64_t *)(uintptr_t)exec_stub)[0];
+	__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+	((stub_t)dst_pa)(fb, 0xF00DF00DF00DF00DUL);
+	__asm__ volatile("dsb sy" ::: "memory");
+	con_str("EXEC", *fb == 0xF00DF00DF00DF00DUL ? "OK" : "BAD");
+	return *fb == 0xF00DF00DF00DF00DUL;
+}
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -92,6 +121,28 @@ const char *loader_boot(uintptr_t dtb)
 		return "bad payload header";
 
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
+
+	/* Prove high-memory execution; green = OK, orange = the stub never ran. */
+	con_str("EXEC", exec_probe() ? "OK" : "BAD");
+	{
+		/* Does instruction fetch work at the kernel's own entry address? */
+		uintptr_t ep = p->entry_va + pa_of_va_base;
+		uint64_t saved = *(volatile uint64_t *)ep;
+		volatile uint64_t *tgt =
+		    (volatile uint64_t *)((uintptr_t)con.fb + 1500UL * 4320UL);
+		*(volatile uint64_t *)0x13FF80000UL =
+		    ((const uint64_t *)(uintptr_t)exec_stub)[0];
+		*(volatile uint64_t *)ep = *(volatile uint64_t *)0x13FF80000UL;
+		__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+		((stub_t)ep)(tgt, 0xABCDEF01ABCDEF01UL);
+		__asm__ volatile("dsb sy" ::: "memory");
+		con_str("ENTRY", *tgt == 0xABCDEF01ABCDEF01UL ? "OK" : "BAD");
+		*(volatile uint64_t *)ep = saved;
+		__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+	}
+	uint64_t sctlr_off;
+	__asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr_off));
+	con_hex("SCTLR", sctlr_off);
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);
 	con_hex("VIRT", p->virt_base);
 	con_hex("ENTRY", p->entry_va);
@@ -137,11 +188,45 @@ const char *loader_boot(uintptr_t dtb)
 	con_hex2("BOOTARG", "pa=", ba_pa, "top=", top);
 
 	uintptr_t entry_pa = p->entry_va + pa_of_va_base;
+	/* $_LowExceptionVectorBase in this kernel build: virt 0xfffffe000748c000,
+	 * i.e. 0x487c000 into __TEXT. Each 0x80-byte slot is "b ." in the source;
+	 * replace it with movz/movk/br so faults land in xnu_vector_hit(slot). */
+	{
+		uint32_t *v = (uint32_t *)(p->phys_base + 0x487c000UL);
+		uintptr_t t = (uintptr_t)&xnu_vec_trap;
+
+		for (uint32_t i = 0; i < 16; i++) {
+			uint32_t *e = v + (i * 0x80) / 4;
+			e[0] = 0xd2800000U | (uint32_t)(t & 0xffff) << 5 | 9;
+			e[1] = 0xf2800000U | 1U << 21 | (uint32_t)(t >> 16 & 0xffff) << 5 | 9;
+			e[2] = 0xf2800000U | 2U << 21 | (uint32_t)(t >> 32 & 0xffff) << 5 | 9;
+			e[3] = 0xf2800000U | 3U << 21 | (uint32_t)(t >> 48 & 0xffff) << 5 | 9;
+			e[4] = 0xd2800000U | (i & 0xffff) << 5;
+			e[5] = 0xd61f0120U;
+		}
+	}
+
 	con_hex("JUMP", entry_pa);
 	con_str("XNU", "jumping (fbcon clears screen)");
 
-	/* Everything was written with the MMU and caches off; drop any stale I-cache lines too. */
-	__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+	/* The arena is cacheable: push the image out and drop stale I-cache lines. */
+	{
+		uintptr_t lo = p->phys_base & ~63UL;
+		uintptr_t hi = (p->kernel_end + pa_of_va_base + 63UL) & ~63UL;
+		__asm__ volatile("dsb sy" ::: "memory");
+		for (uintptr_t a = lo; a < hi; a += 64)
+			__asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
+		__asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
+	}
+	{
+		/* Dark blue wash: any write from start.s is now unmistakable. */
+		volatile uint32_t *f = (volatile uint32_t *)(uintptr_t)con.fb;
+		for (uint32_t i = 0; i < 1080U * 2400U; i++)
+			f[i] = 0x00102040U;
+		__asm__ volatile("dsb sy" ::: "memory");
+	}
+	/* MMU stays on: with it off, ABL's TCR_EL1.IPS limits PAs to 32 bits and
+	 * every access above 4 GiB takes an address-size abort. */
 	((xnu_entry_t)entry_pa)(ba_pa);
 	return "xnu returned";
 }
