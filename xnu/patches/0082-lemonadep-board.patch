@@ -1188,7 +1188,7 @@ index 023086f..41d8039 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..cd6d29c 100644
+index 6928957..94b0dd5 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,15 +7,15 @@
@@ -1210,8 +1210,13 @@ index 6928957..cd6d29c 100644
  #define EARLY_SCALE 2u
  #define EARLY_CELL_W (8u * EARLY_SCALE)
  #define EARLY_CELL_H (16u * EARLY_SCALE)
-@@ -42,6 +42,10 @@ sweet_early_clear_row(void)
+@@ -40,8 +40,15 @@ sweet_early_clear_row(void)
+ }
+ 
  void
++extern volatile char sweet_trace_buf[2048];
++extern volatile unsigned int sweet_trace_len;
++
  sweet_early_putc(char c)
  {
 +	if (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {
@@ -1221,7 +1226,7 @@ index 6928957..cd6d29c 100644
  	if (early_disabled) {
  		return;
  	}
-@@ -109,13 +113,62 @@ sweet_early_mark(unsigned int stage, const char *label)
+@@ -109,13 +116,62 @@ sweet_early_mark(unsigned int stage, const char *label)
  	sweet_early_putc('\n');
  }
  
@@ -1285,7 +1290,7 @@ index 6928957..cd6d29c 100644
  	sweet_early_string("\nSWEET EARLY PANIC: ");
  	va_list copy;
  	va_copy(copy, *args);
-@@ -129,6 +182,12 @@ void
+@@ -129,6 +185,12 @@ void
  sweet_early_relocate(uint64_t base)
  {
  	sweet_early_mark(8, "leaving bootstrap TTBR0");
