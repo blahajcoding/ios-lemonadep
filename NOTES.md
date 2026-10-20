@@ -1,5 +1,73 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Lemonadep first-XNU-boot review (2026-10-20)
+
+- Scope: decision review; engineer implements. Reviewed checkout bd54cff.
+  No kernel changes, builds, CI queries, device commands or independently
+  observed lemonadep XNU results. Historical CI 39304248290 was not checked;
+  the user's current pending CI run ID was not supplied.
+- New user-reported evidence supersedes the interrupt blocker below:
+  CNTV INTID 27 delivered 30 IRQs in 300 ms and SGI1 delivered 10/10;
+  RPR idle, DAIF 0x3c0 -> 0x340. Single-word high-memory writes also passed.
+  This qualifies the shim path, not XNU's reinitialization or its whole arena.
+  shim/shim.c calls loader_boot before the qualification tests when a payload
+  is present, so standalone test state is not the state at the XNU jump.
+- Keep [0x100000000,0x140000000) as the initial 1-GiB managed arena, including
+  kernel, mockfs Mach-O, ADT and boot_args, with allocator headroom above
+  topOfKernelData. Require 64-bit destination/entry arithmetic, bounds and
+  live-source/loader exclusions. The 0xe4700000 free-window claim crosses
+  4 GiB and overlaps both active splash and its reserved region; not an
+  alternative arena authorization. Preserve [0xe4000000,0xe6300000).
+  D-cache disabled at entry does not clean earlier dirty cacheable writes;
+  establish that payload copies were uncached or cleaned to PoC before entry.
+- Definite visibility bug: tools/lemonadep_overlay.py substitutes
+  BOARD_FB_END=10368000, and 0082 uses it as the START of a 64x32 stage-0
+  marker. This is below visible scanout. Required offset is
+  (2400-32)*4320 = 10229760. Correct generator and regenerate patch; absence
+  of the current marker cannot diagnose failure to enter XNU.
+- DEVELOPMENT needs -enable_kprintf_spam in addition to debug=0xc.
+  Keep serial=3 (framebuffer-backed fake serial), cpus=1, keepsyms=1,
+  -noprogress and rd=md0. Add explicit sweetlog=0 ufsrw=0 sweetusb=0
+  sweetusblog=0 for any full-stack image; do not enable sweetbattery.
+  wdt_test=no_user_checkin is for real watchdogd later, not static PID1.
+  debug=0xc includes DB_NMI and DB_KPRT; 0x100's old panic-screen flag is
+  obsolete in this XNU, not a solution for retaining photo evidence.
+- Reconcile artifact scope BEFORE interpreting a boot: xnu.yml copies all
+  patches/staging scripts, and 0082 was generated against 0001..0081.
+  Current workflow does not implement the claimed 0001..0025-only baseline.
+  rd=md0 bypasses the lazy UFS root path, but extra personalities/CPU code
+  still exist. Prefer the explicit prefix plus regenerated adaptation;
+  merely removing later patches can break application of current 0082.
+- Accept syscall 435 remaining nosys for static PID1. Correct provenance:
+  bsd/kern/makesyscalls.sh generates struct pid_hibernate_args in sysproto.h
+  from syscalls.master. The overlay does not scan .master and skips
+  vm_unix.c; matching LEMONADEP guards in BOTH files plus regenerated headers
+  fix later support. An upstream green build is not proof of an SDK type.
+  Do not hand-declare the struct or globally enable CONFIG_EMBEDDED.
+- Keep early framebuffer 1080x2400/stride 4320 at 0xe4000000 in every path.
+  Native 1440x3216 requires a separate display-controller/panel modeset;
+  editing dimensions alone is wrong. Missing /product is deferred for static
+  PID1, required identity work before real iOS services/GUI. Eight CPU nodes
+  are unnecessary for this gate; use only cpu0 or verify cpus=1 selects one.
+- Diagnosis: stages 7..14 isolate arm_vm_init/TTBR/pmap transitions;
+  SWEET GIC: virtual timer INTID 27 confirms selection, NOT delivery.
+  Separate IRQ receipt/rearm evidence from CPU-registration waits. Capture
+  IRQ 27 first and second delivery, plus SGI1; do not continuously print ticks
+  or read IAR as a passive probe. GICD_CTLR=0x53 means DS=1; preserve Group1.
+  Static-init success is PID 1 plus about five-second still-alive intervals
+  for 60 seconds, not only Darwin or a rapid heartbeat (select errors are
+  unchecked in tools/sweet-init.S).
+- Next gates: small HFS RAM-disk/static init (0026/27); resolve LUN capacity
+  versus GPT bounds and test high-PA UFS DMA/cache maintenance (0028/0034)
+  read-only; then small HFS on userdata ONLY after a fresh destructive-step
+  confirmation (0029 handles unsealed root). Mount external SSD and obtain
+  mkfs.hfsplus/fsck.hfsplus before full iOS image work; reuse mkiosroot.sh
+  rather than duplicating decompressed roots/shared caches on internal disk.
+  Real launchd needs later exec/crypto/entitlement/bindfs/keybag work beyond
+  0025; only then prioritize CPU-blit IOSurface/IOMFB GUI and board input.
+  Do not port sweet PMIC/touch MMIO by widening guards. Native scanout, SMP
+  and GPU acceleration are later, independent milestones.
+
 ## Lemonadep interrupt decision handoff (2026-10-19)
 
 - Scope: diagnosis only; engineer implements. No new build, CI run, device
