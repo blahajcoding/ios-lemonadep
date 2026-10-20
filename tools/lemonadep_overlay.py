@@ -37,6 +37,13 @@ FB_EDITS = {
     ],
     "osfmk/arm64/arm_vm_init.c": [
         ("*slot = 0x9c000000ULL", "*slot = (uint64_t)BOARD_FB_BASE"),
+        # The slot was rewritten but a stale TLB entry for that VA (from the
+        # bootstrap tables) would still win: every console write would go to
+        # whatever the old mapping pointed at, silently.
+        ('\t__asm__ volatile("dsb ishst" ::: "memory");',
+         '\t__asm__ volatile("dsb ishst" ::: "memory");\n'
+         '\t__asm__ volatile("tlbi vaae1, %0" : : "r"(va));\n'
+         '\t__asm__ volatile("dsb ish; isb" ::: "memory");'),
     ],
     "osfmk/arm64/start.s": [
         ("MOV64\tx0, (0x9c000000 + 2368 * 4320)", "MOV64\tx0, (BOARD_FB_BASE + BOARD_FB_END)"),

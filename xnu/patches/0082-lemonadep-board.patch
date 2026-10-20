@@ -995,7 +995,7 @@ index 9a748ea..b99b021 100644
  endif
  
 diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
-index 06bb568..95eec98 100644
+index 06bb568..6564a49 100644
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
 @@ -1825,7 +1825,7 @@ init_ptpages(tt_entry_t *tt, vm_map_address_t start, vm_map_address_t end, bool
@@ -1007,7 +1007,7 @@ index 06bb568..95eec98 100644
  /*
   * The reserved low-globals/kernel region is excluded from VM allocation.
   * Use the otherwise empty 32MB block above low globals and below gVirtBase
-@@ -1843,7 +1843,7 @@ sweet_early_map_final(void)
+@@ -1843,11 +1843,13 @@ sweet_early_map_final(void)
  	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
  	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
  	assert(*slot == ARM_TTE_EMPTY);
@@ -1016,7 +1016,13 @@ index 06bb568..95eec98 100644
  	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
  	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
  	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
-@@ -2179,7 +2179,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	__asm__ volatile("dsb ishst" ::: "memory");
++	__asm__ volatile("tlbi vaae1, %0" : : "r"(va));
++	__asm__ volatile("dsb ish; isb" ::: "memory");
+ }
+ #endif
+ 
+@@ -2179,7 +2181,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
  
  	arm_set_user_tbi();
  
@@ -1025,7 +1031,7 @@ index 06bb568..95eec98 100644
  	/* phystokv() must still refer to the bootstrap aperture here. */
  	sweet_early_map_final();
  #endif
-@@ -2188,7 +2188,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+@@ -2188,7 +2190,7 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
  
  	ml_enable_monitor();
  
