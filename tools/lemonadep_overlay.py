@@ -234,6 +234,21 @@ sweet_panic_mailbox_store(const char *fmt, va_list *args)
     decl = "void\nsweet_early_panic(const char *fmt, va_list *args)\n"
     assert decl in early, "sweet_early_panic not found"
     early = early.replace(decl, mailbox + decl, 1)
+
+    # Mirror everything the bootstrap console prints into the trace buffer, so a
+    # host can still see the last line after the framebuffer alias goes away.
+    putc_old = "sweet_early_putc(char c)\n{\n\tif (early_disabled) {\n"
+    assert putc_old in early, "sweet_early_putc shape changed"
+    early = early.replace(
+        putc_old,
+        "sweet_early_putc(char c)\n{\n"
+        "\tif (sweet_trace_len < sizeof(sweet_trace_buf) - 1) {\n"
+        "\t\tsweet_trace_buf[sweet_trace_len++] = c;\n"
+        "\t\tsweet_trace_buf[sweet_trace_len] = 0;\n"
+        "\t}\n"
+        "\tif (early_disabled) {\n",
+        1,
+    )
     body = "\tearly_panicking = 1;\n"
     assert body in early
     early = early.replace(body, body + "\tsweet_panic_mailbox_store(fmt, args);\n", 1)
