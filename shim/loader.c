@@ -230,6 +230,14 @@ const char *loader_boot(uintptr_t dtb)
 	__asm__ volatile("msr cntv_ctl_el0, xzr; msr daifset, #0xf" ::: "memory");
 	/* MMU stays on: with it off, ABL's TCR_EL1.IPS limits PAs to 32 bits and
 	 * every access above 4 GiB takes an address-size abort. */
+	/* ABL leaves SCTLR_EL1.DZE set; with it, MSR DAIF* traps as undefined
+	 * (XNU's sleh.c enables IRQs that way). */
+	{
+		uint64_t sctlr;
+		__asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+		sctlr &= ~(1ULL << 14);
+		__asm__ volatile("msr sctlr_el1, %0; isb" : : "r"(sctlr) : "memory");
+	}
 	((xnu_entry_t)entry_pa)(ba_pa);
 	return "xnu returned";
 }
