@@ -98,7 +98,9 @@ FB_EDITS = {
          "#endif\n"),
     ],
     "osfmk/arm64/arm_vm_init.c": [
-        ("*slot = 0x9c000000ULL", "*slot = (uint64_t)BOARD_FB_BASE"),
+        ("*slot = 0x9c000000ULL", "*slot = (uint64_t)(BOARD_FB_BASE & ~(uint64_t)(ARM_TT_L2_SIZE - 1))"),
+        ("sweet_early_relocate(SWEET_EARLY_FB_VA);",
+         "sweet_early_relocate(SWEET_EARLY_FB_VA + (BOARD_FB_BASE & (ARM_TT_L2_SIZE - 1)));"),
         # The slot was rewritten but a stale TLB entry for that VA (from the
         # bootstrap tables) would still win: every console write would go to
         # whatever the old mapping pointed at, silently.
