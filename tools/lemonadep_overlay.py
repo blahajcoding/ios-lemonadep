@@ -88,6 +88,15 @@ FB_EDITS = {
          "\tearly_fb = (volatile uint32_t *)(uintptr_t)base;\n"
          "#if defined(LEMONADEP)\n"
          "\tearly_phys_live = 1;\n"
+         "\t{\n"
+         "\t\tvolatile uint32_t *p = early_fb_now();\n"
+         "\t\t*p = 0xdeadbeefu;\n"
+         "\t\t__asm__ volatile(\"dsb sy\" ::: \"memory\");\n"
+         "\t\tearly_flush((const void *)p, 4u);\n"
+         "\t\tsweet_trace(\"FBPTR %x rb %x base %x|\",\n"
+         "\t\t    (unsigned)(uintptr_t)p, (unsigned)*p,\n"
+         "\t\t    (unsigned)phystokv((uint64_t)BOARD_FB_BASE));\n"
+         "\t}\n"
          "#endif\n"),
     ],
     "osfmk/arm64/arm_vm_init.c": [

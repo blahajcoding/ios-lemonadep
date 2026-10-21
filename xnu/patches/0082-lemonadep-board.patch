@@ -1217,7 +1217,7 @@ index 023086f..79dd2d4 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..458549b 100644
+index 6928957..6e46740 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,20 +7,43 @@
@@ -1365,7 +1365,7 @@ index 6928957..458549b 100644
  	sweet_early_string("\nSWEET EARLY PANIC: ");
  	va_list copy;
  	va_copy(copy, *args);
-@@ -129,7 +210,16 @@ void
+@@ -129,7 +210,25 @@ void
  sweet_early_relocate(uint64_t base)
  {
  	sweet_early_mark(8, "leaving bootstrap TTBR0");
@@ -1378,6 +1378,15 @@ index 6928957..458549b 100644
  	early_fb = (volatile uint32_t *)(uintptr_t)base;
 +#if defined(LEMONADEP)
 +	early_phys_live = 1;
++	{
++		volatile uint32_t *p = early_fb_now();
++		*p = 0xdeadbeefu;
++		__asm__ volatile("dsb sy" ::: "memory");
++		early_flush((const void *)p, 4u);
++		sweet_trace("FBPTR %x rb %x base %x|",
++		    (unsigned)(uintptr_t)p, (unsigned)*p,
++		    (unsigned)phystokv((uint64_t)BOARD_FB_BASE));
++	}
 +#endif
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_mark(9, "kernel framebuffer VA live");
