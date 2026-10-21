@@ -31,6 +31,15 @@ GUARDS = [
 ]
 
 FB_EDITS = {
+    # sweet_usb.c drives the SM7150 DWC3 wrapper; on SM8350 that register block
+    # is not mapped the same way and the first probe read takes an external
+    # abort, so leave USB for a dedicated lemonadep driver.
+    "bsd/dev/sweet_ufs.c": [
+        ("\tsweet_usb_probe();",
+         "#if !defined(LEMONADEP)\n"
+         "\tsweet_usb_probe();\n"
+         "#endif"),
+    ],
     "osfmk/arm64/machine_routines.c": [
         # CNTP_CTL_EL0 is architecturally undefined at EL1 on this SoC (ABL
         # keeps the physical timer in EL2); the virtual timer is what we use.

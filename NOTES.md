@@ -1,4 +1,31 @@
 
+## Lemonadep: iOS root written to userdata; kernel panics in the USB probe (2026-10-21, night)
+
+Root image: `ipsw/iosroot.img` (HFSX, 4096 B blocks, 11.7 GiB used, 184,154 files, 4.3 GiB
+free, **unjournaled** because the Linux HFS+ driver refuses a fresh journal). Written to the
+phone's `userdata` partition (102.1 GiB per `fastboot getvar partition-size:userdata`) with
+`fastboot -S 256M flash userdata ipsw/iosroot.img`; flash reported "Writing 'userdata' OKAY"
+after 558.9 s. Bootloader max-download is 768 MiB, hence `-S 256M`.
+
+Boot with `rd=ufsroot0` (`shim/out/shim-boot-ufs1.img`, kernel 77d1212) reaches userspace
+setup far enough to print `SWEET UFS: "userdata" on LUN 0 ...`, `SWEET USB: clk sleep CBCR
+0x00010c00 (on)`, `clk util CBCR 0x00006001 (on)` and then panics:
+
+    Kernel data abort at pc 0xfffffe00074ed920, lr 0xfffffe00074ed91c
+    esr 0x96000010  (synchronous external abort)   far 0xfffffe78eb77d02c
+
+Symbolised: `_sweet_usb_probe+0x12c`, instruction `ldr w26, [x19, #0x502c]` - a read of the
+SM7150 DWC3 register block, which is not mapped on SM8350. `sweet_ufs_rootdev()` calls
+`sweet_keys_init(); sweet_touch_init(); sweet_usb_probe();` at the end of its success path.
+
+Fix committed (0082 now 1855 lines): the overlay wraps `sweet_usb_probe();` in
+`#if !defined(LEMONADEP)` in `bsd/dev/sweet_ufs.c`. Keys/touch are left alone - they returned
+cleanly before the abort. USB needs its own SM8350 driver later.
+
+Next: CI build with that overlay, boot `rd=ufsroot0` again, expect the HFS mount and
+`load_init_program` from `/sbin/launchd` on the real root. Watch the UFS read path beyond the
+first partition read (DMA above 4 GiB) and IOKit/HID drivers that assume sweet nodes.
+
 ## Lemonadep milestone: XNU boots, PID 1 runs (2026-10-21)
 
 First full LEMONADEP boot on real hardware (t6 image, kernel 77d1212 + 0082 1845 lines):
@@ -26,31 +53,6 @@ Next: real HFS root (needs the IPSW SSD mounted and `mkfs.hfsplus`), then launch
 SMP after that. Nothing destructive has run yet; no partition backups exist.
 
 
-## Lemonadep milestone: XNU boots, PID 1 runs (2026-10-21)
-
-First full LEMONADEP boot on real hardware (t6 image, kernel 77d1212 + 0082 1845 lines):
-
-    BSD root: md0, major 1, minor 0
-    load_init_program: attempting to load /usr/appleinternal/sbin/launchd.development
-    load_init_program: attempting to load /sbin/launchd
-    *** SWEET userspace: init running as PID 1 ***
-    SWEET init: still alive            (repeating)
-    SWEET CPU: cpu-0 entered initCPU ... SGI1 OK
-    Copyright (c) 1982, 1986, 1989, 1991, 1993 The Regents of the University of California
-    AMFI / Sandbox policies loaded, HFS hfs-627.100.6, SK enabled, dylib_init PASSED
-
-Boot recipe (unchanged): CI `xnu.yml -f machine_config=LEMONADEP`, download artifact,
-`tools/mkadt.py /tmp/opencode/lem.adt --lemonadep`, `tools/mkpayload.py`, `DTB=/home/venus/dtb
-shim/build.sh ../shim/out/payload-lem.bin`, then `tools/lem-boot.sh <img> --wait-adb`.
-
-Two defects fixed to get here:
-* early console alias must carry the 32 MB block offset of `BOARD_FB_BASE` (0xE4D00000 is
-  13 MiB into its block; sweet's 0x9C000000 is aligned, which hid the bug);
-* `_enable_virtual_timer()` writes `CNTP_CTL_EL0` as a precaution and that is undefined at EL1
-  here; guarded out for LEMONADEP.
-
-Next: real HFS root (needs the IPSW SSD mounted and `mkfs.hfsplus`), then launchd; UFS root and
-SMP after that. Nothing destructive has run yet; no partition backups exist.
 
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 

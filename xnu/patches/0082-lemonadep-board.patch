@@ -73,7 +73,7 @@ index 03defe6..9c4f121 100644
  #include <sys/systm.h>
  #include <sys/errno.h>
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
-index 6b926fe..d4b44f4 100644
+index 6b926fe..37dc1f0 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
 @@ -18,7 +18,7 @@
@@ -85,6 +85,16 @@ index 6b926fe..d4b44f4 100644
  #include <sys/param.h>
  #include <sys/systm.h>
  #include <sys/buf.h>
+@@ -659,7 +659,9 @@ sweet_ufs_init(void)
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+ 	sweet_keys_init();
+ 	sweet_touch_init();
++#if !defined(LEMONADEP)
+ 	sweet_usb_probe();
++#endif
+ 	return 0;
+ }
+ 
 diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
 index b6c1a41..d98655d 100644
 --- a/bsd/dev/sweet_usb.c

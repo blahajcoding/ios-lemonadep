@@ -57,7 +57,10 @@ apfs_mount "$sysos" sysos
 apfs_mount "$appos" appos
 
 truncate -s "$size" "$out"
-mkfs.hfsplus -s -J -v iOSRoot "$out"
+# Linux cannot mount a freshly journaled volume read-write ("found corrupt and
+# needs to be repaired"), so the image is built unjournaled; XNU's hfs mounts
+# either form. Re-add a journal later if it ever matters.
+mkfs.hfsplus -s -v iOSRoot "$out"
 mkdir "$work/root"
 sudo mount -t hfsplus -o loop,force "$out" "$work/root"
 mounts=("$work/root" "${mounts[@]}")
