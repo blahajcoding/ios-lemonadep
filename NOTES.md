@@ -1,5 +1,29 @@
 
-## Lemonadep: iOS root written to userdata; kernel panics in the USB probe (2026-10-21, night)
+## START HERE (new thread, 2026-10-21 night)
+
+Read `AGENTS.md`, then this file top-down; the sections below are newest-first.
+Open work item: build with the USB-probe fix and boot the real HFS root.
+
+    # 1. pending CI run (LEMONADEP) for commit 07328f2
+    gh run watch 39544982671
+    rm -rf xnu/out-0082 && gh run download 39544982671 -n xnu-kernel -D xnu/out-0082
+    ls xnu/out-0082/kernel.development.lemonadep   # must say .lemonadep, not .sweet
+
+    # 2. phone payload with the UFS root
+    python3 tools/mkadt.py /tmp/opencode/lem.adt --lemonadep
+    python3 tools/mkpayload.py xnu/out-0082/kernel.development.lemonadep /tmp/opencode/lem.adt \
+        shim/out/payload-lem.bin --ramdisk /tmp/opencode/sweet-init \
+        --cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress -enable_kprintf_spam rd=ufsroot0 sweetlog=0 ufsrw=0"
+    DTB=/home/venus/dtb shim/build.sh ../shim/out/payload-lem.bin
+    cp shim/out/shim-boot.img shim/out/shim-boot-ufs2.img
+
+    # 3. boot (phone on Android). fastboot here only works when issued right after
+    #    the reboot, which is what this helper does. It blocks on adb.
+    ./tools/lem-boot.sh shim/out/shim-boot-ufs2.img --wait-adb
+
+Photos of the screen are the only console until USB networking exists. Hold power ~10 s
+to leave the shim. `ipsw/` is gitignored (16 GiB image).
+
 
 Root image: `ipsw/iosroot.img` (HFSX, 4096 B blocks, 11.7 GiB used, 184,154 files, 4.3 GiB
 free, **unjournaled** because the Linux HFS+ driver refuses a fresh journal). Written to the
