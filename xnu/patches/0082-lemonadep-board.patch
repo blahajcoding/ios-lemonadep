@@ -1217,7 +1217,7 @@ index 023086f..79dd2d4 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..6e46740 100644
+index 6928957..62a14d5 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
 @@ -7,20 +7,43 @@
@@ -1365,7 +1365,7 @@ index 6928957..6e46740 100644
  	sweet_early_string("\nSWEET EARLY PANIC: ");
  	va_list copy;
  	va_copy(copy, *args);
-@@ -129,7 +210,25 @@ void
+@@ -129,7 +210,28 @@ void
  sweet_early_relocate(uint64_t base)
  {
  	sweet_early_mark(8, "leaving bootstrap TTBR0");
@@ -1379,13 +1379,16 @@ index 6928957..6e46740 100644
 +#if defined(LEMONADEP)
 +	early_phys_live = 1;
 +	{
-+		volatile uint32_t *p = early_fb_now();
-+		*p = 0xdeadbeefu;
-+		__asm__ volatile("dsb sy" ::: "memory");
-+		early_flush((const void *)p, 4u);
-+		sweet_trace("FBPTR %x rb %x base %x|",
-+		    (unsigned)(uintptr_t)p, (unsigned)*p,
-+		    (unsigned)phystokv((uint64_t)BOARD_FB_BASE));
++		/* Ask the MMU where each candidate console VA actually goes. */
++		uint64_t par;
++		__asm__ volatile("at s1e1r, %0" : : "r"((uint64_t)(uintptr_t)base));
++		__asm__ volatile("mrs %0, par_el1" : "=r"(par));
++		sweet_trace("AT alias va %x par %x|",
++		    (unsigned)(uintptr_t)base, (unsigned)par);
++		__asm__ volatile("at s1e1r, %0" : : "r"((uint64_t)(uintptr_t)early_fb_now()));
++		__asm__ volatile("mrs %0, par_el1" : "=r"(par));
++		sweet_trace("AT phys va %x par %x|",
++		    (unsigned)(uintptr_t)early_fb_now(), (unsigned)par);
 +	}
 +#endif
  	__asm__ volatile("dsb sy" ::: "memory");
