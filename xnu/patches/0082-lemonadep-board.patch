@@ -1066,7 +1066,7 @@ index b082a10..914a8b3 100644
  boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
  boolean_t
 diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
-index a1f2a91..3b7ca35 100644
+index a1f2a91..f029cd4 100644
 --- a/osfmk/arm64/machine_routines.c
 +++ b/osfmk/arm64/machine_routines.c
 @@ -954,7 +954,7 @@ ml_parse_cpu_topology(void)
@@ -1096,6 +1096,16 @@ index a1f2a91..3b7ca35 100644
  /*
   * sweet: arm_vm_init() calls this unconditionally; Apple's definition (it
   * enters the PPL/monitor) ships only in the closed per-SoC library. There is
+@@ -2274,7 +2274,9 @@ _enable_virtual_timer(void)
+ 
+ 	__builtin_arm_wsr64("CNTV_CTL_EL0", cntvctl);
+ 	/* disable the physical timer as a precaution, as its registers reset to architecturally unknown values */
++#if !defined(LEMONADEP)
+ 	__builtin_arm_wsr64("CNTP_CTL_EL0", CNTP_CTL_EL0_IMASKED);
++#endif
+ }
+ 
+ void
 diff --git a/osfmk/arm64/proc_reg.h b/osfmk/arm64/proc_reg.h
 index e01c124..551870c 100644
 --- a/osfmk/arm64/proc_reg.h

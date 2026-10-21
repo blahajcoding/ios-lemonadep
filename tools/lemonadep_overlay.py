@@ -31,6 +31,14 @@ GUARDS = [
 ]
 
 FB_EDITS = {
+    "osfmk/arm64/machine_routines.c": [
+        # CNTP_CTL_EL0 is architecturally undefined at EL1 on this SoC (ABL
+        # keeps the physical timer in EL2); the virtual timer is what we use.
+        ("\t__builtin_arm_wsr64(\"CNTP_CTL_EL0\", CNTP_CTL_EL0_IMASKED);",
+         "#if !defined(LEMONADEP)\n"
+         "\t__builtin_arm_wsr64(\"CNTP_CTL_EL0\", CNTP_CTL_EL0_IMASKED);\n"
+         "#endif"),
+    ],
     "osfmk/arm64/sweet_early.c": [
         ("(uintptr_t)0x9c000000", "(uintptr_t)BOARD_FB_BASE"),
         ("#define EARLY_STRIDE (4320u / 4)", "#define EARLY_STRIDE (BOARD_FB_STRIDE / 4)"),
