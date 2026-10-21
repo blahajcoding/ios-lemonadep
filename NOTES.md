@@ -1,3 +1,57 @@
+
+## Lemonadep milestone: XNU boots, PID 1 runs (2026-10-21)
+
+First full LEMONADEP boot on real hardware (t6 image, kernel 77d1212 + 0082 1845 lines):
+
+    BSD root: md0, major 1, minor 0
+    load_init_program: attempting to load /usr/appleinternal/sbin/launchd.development
+    load_init_program: attempting to load /sbin/launchd
+    *** SWEET userspace: init running as PID 1 ***
+    SWEET init: still alive            (repeating)
+    SWEET CPU: cpu-0 entered initCPU ... SGI1 OK
+    Copyright (c) 1982, 1986, 1989, 1991, 1993 The Regents of the University of California
+    AMFI / Sandbox policies loaded, HFS hfs-627.100.6, SK enabled, dylib_init PASSED
+
+Boot recipe (unchanged): CI `xnu.yml -f machine_config=LEMONADEP`, download artifact,
+`tools/mkadt.py /tmp/opencode/lem.adt --lemonadep`, `tools/mkpayload.py`, `DTB=/home/venus/dtb
+shim/build.sh ../shim/out/payload-lem.bin`, then `tools/lem-boot.sh <img> --wait-adb`.
+
+Two defects fixed to get here:
+* early console alias must carry the 32 MB block offset of `BOARD_FB_BASE` (0xE4D00000 is
+  13 MiB into its block; sweet's 0x9C000000 is aligned, which hid the bug);
+* `_enable_virtual_timer()` writes `CNTP_CTL_EL0` as a precaution and that is undefined at EL1
+  here; guarded out for LEMONADEP.
+
+Next: real HFS root (needs the IPSW SSD mounted and `mkfs.hfsplus`), then launchd; UFS root and
+SMP after that. Nothing destructive has run yet; no partition backups exist.
+
+
+## Lemonadep milestone: XNU boots, PID 1 runs (2026-10-21)
+
+First full LEMONADEP boot on real hardware (t6 image, kernel 77d1212 + 0082 1845 lines):
+
+    BSD root: md0, major 1, minor 0
+    load_init_program: attempting to load /usr/appleinternal/sbin/launchd.development
+    load_init_program: attempting to load /sbin/launchd
+    *** SWEET userspace: init running as PID 1 ***
+    SWEET init: still alive            (repeating)
+    SWEET CPU: cpu-0 entered initCPU ... SGI1 OK
+    Copyright (c) 1982, 1986, 1989, 1991, 1993 The Regents of the University of California
+    AMFI / Sandbox policies loaded, HFS hfs-627.100.6, SK enabled, dylib_init PASSED
+
+Boot recipe (unchanged): CI `xnu.yml -f machine_config=LEMONADEP`, download artifact,
+`tools/mkadt.py /tmp/opencode/lem.adt --lemonadep`, `tools/mkpayload.py`, `DTB=/home/venus/dtb
+shim/build.sh ../shim/out/payload-lem.bin`, then `tools/lem-boot.sh <img> --wait-adb`.
+
+Two defects fixed to get here:
+* early console alias must carry the 32 MB block offset of `BOARD_FB_BASE` (0xE4D00000 is
+  13 MiB into its block; sweet's 0x9C000000 is aligned, which hid the bug);
+* `_enable_virtual_timer()` writes `CNTP_CTL_EL0` as a precaution and that is undefined at EL1
+  here; guarded out for LEMONADEP.
+
+Next: real HFS root (needs the IPSW SSD mounted and `mkfs.hfsplus`), then launchd; UFS root and
+SMP after that. Nothing destructive has run yet; no partition backups exist.
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Lemonadep MMU-on entry decision review (2026-10-20)
