@@ -59,11 +59,6 @@ FB_EDITS = {
          "static volatile uint32_t *\n"
          "early_fb_now(void)\n"
          "{\n"
-         "#if defined(LEMONADEP)\n"
-         "\tif (early_phys_live) {\n"
-         "\t\treturn (volatile uint32_t *)(uintptr_t)phystokv((uint64_t)BOARD_FB_BASE);\n"
-         "\t}\n"
-         "#endif\n"
          "\treturn early_fb;\n"
          "}"),
         ("\t\t\t\tfor (unsigned int sx = 0; sx < EARLY_SCALE; sx++) {\n"

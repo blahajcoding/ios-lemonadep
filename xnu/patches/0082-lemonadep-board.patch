@@ -1217,10 +1217,10 @@ index 023086f..79dd2d4 100644
  	cmp		x0, x1
  	bne		.
 diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
-index 6928957..62a14d5 100644
+index 6928957..385ab3a 100644
 --- a/osfmk/arm64/sweet_early.c
 +++ b/osfmk/arm64/sweet_early.c
-@@ -7,20 +7,43 @@
+@@ -7,20 +7,38 @@
   */
  #include <arm64/sweet_early.h>
  
@@ -1258,17 +1258,12 @@ index 6928957..62a14d5 100644
 +static volatile uint32_t *
 +early_fb_now(void)
 +{
-+#if defined(LEMONADEP)
-+	if (early_phys_live) {
-+		return (volatile uint32_t *)(uintptr_t)phystokv((uint64_t)BOARD_FB_BASE);
-+	}
-+#endif
 +	return early_fb;
 +}
  
  extern unsigned char iso_font[256 * 16];
  
-@@ -39,9 +62,16 @@ sweet_early_clear_row(void)
+@@ -39,9 +57,16 @@ sweet_early_clear_row(void)
  	}
  }
  
@@ -1285,7 +1280,7 @@ index 6928957..62a14d5 100644
  	if (early_disabled) {
  		return;
  	}
-@@ -73,6 +103,7 @@ sweet_early_putc(char c)
+@@ -73,6 +98,7 @@ sweet_early_putc(char c)
  					line[gx * EARLY_SCALE + sx] = pixel;
  				}
  			}
@@ -1293,7 +1288,7 @@ index 6928957..62a14d5 100644
  		}
  	}
  	early_col++;
-@@ -97,6 +128,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+@@ -97,6 +123,7 @@ sweet_early_mark(unsigned int stage, const char *label)
  		for (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {
  			EARLY_FB[y * EARLY_STRIDE + x] = color;
  		}
@@ -1301,7 +1296,7 @@ index 6928957..62a14d5 100644
  	}
  	__asm__ volatile("dsb sy" ::: "memory");
  	sweet_early_string("SWEET EARLY ");
-@@ -109,13 +141,62 @@ sweet_early_mark(unsigned int stage, const char *label)
+@@ -109,13 +136,62 @@ sweet_early_mark(unsigned int stage, const char *label)
  	sweet_early_putc('\n');
  }
  
@@ -1365,7 +1360,7 @@ index 6928957..62a14d5 100644
  	sweet_early_string("\nSWEET EARLY PANIC: ");
  	va_list copy;
  	va_copy(copy, *args);
-@@ -129,7 +210,28 @@ void
+@@ -129,7 +205,28 @@ void
  sweet_early_relocate(uint64_t base)
  {
  	sweet_early_mark(8, "leaving bootstrap TTBR0");

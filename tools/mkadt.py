@@ -74,7 +74,7 @@ def build(seed=None, qemu=False, highmem=False, lemonadep=False):
         # OnePlus 9 Pro: XNU gets the 1 GiB arena at 0x100000000 that the shim
         # proved writable; board numbers come from the live FDT.
         global FB, FB_SIZE, FB_W, FB_H, FB_STRIDE, VTIMER_INTID
-        FB, FB_SIZE = 0xE4000000, 0x2300000
+        FB, FB_SIZE = 0xE4D00000, 0x2300000
         FB_W, FB_H, FB_STRIDE = 1080, 2400, 4320
         VTIMER_INTID = 27
     phys_base, mem_size = (0x100000000, 0x40000000) if lemonadep else \
