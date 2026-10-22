@@ -1,0 +1,41 @@
+From: lemonadep bring-up
+Subject: [PATCH] pmap: form the physical address in pmap_sync_page_attributes_phys with ptoa()
+
+pmap_sync_page_attributes_phys() passed `pp << PAGE_SHIFT' to flush_dcache()
+as a physical address.  pp is a ppnum_t (uint32_t, osfmk/mach/vm_types.h:69)
+and PAGE_SHIFT is an int, so the shift happens in 32 bits and the high half of
+the physical address is dropped before the vm_offset_t cast.
+
+On LEMONADEP all DRAM sits at or above 0x100000000 (phys 0x100000000,
+5015 MiB), so every managed page has pp >= 0x40000 and the shift wraps to a
+low address.  flush_dcache(..., phys=TRUE) hands that to phystokv_range(),
+which panics in osfmk/arm64/arm_vm_init.c:396:
+
+	phystokv_range: illegal PA: 0x0; phys base 0x100000000, size ...
+
+SWEET never saw this: its DRAM starts at 0x40000000, where the shift still
+fits in 32 bits.  ptoa() (osfmk/mach/vm_param.h:113) casts to vm_address_t
+before shifting, so it is identical for low physical addresses and correct
+above 4 GiB.  The only caller is pmap_sync_wimg(), reached from
+pmap_set_cache_attributes_priv() and pmap_update_compressor_page_internal()
+when a page's WIMG attributes change.
+
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -6877,7 +6877,14 @@ void
+ pmap_sync_page_attributes_phys(
+ 	ppnum_t pp)
+ {
+-	flush_dcache((vm_offset_t) (pp << PAGE_SHIFT), PAGE_SIZE, TRUE);
++	/*
++	 * ptoa() widens pp before the shift.  `pp << PAGE_SHIFT' is a 32-bit
++	 * shift (pp is a ppnum_t), so physical addresses at or above 4 GiB
++	 * wrap to a low address, and flush_dcache(phys=TRUE) then panics in
++	 * phystokv_range().  Boards whose DRAM starts at 4 GiB hit this on
++	 * every page.
++	 */
++	flush_dcache((vm_offset_t) ptoa(pp), PAGE_SIZE, TRUE);
+ }
+ 
+ #if CONFIG_COREDUMP
